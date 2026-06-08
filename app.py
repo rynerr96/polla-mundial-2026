@@ -798,8 +798,18 @@ def ranking_page():
 def fixture_page():
     st.subheader("📅 Fixture Mundial 2026")
     fixture = load_fixture().copy()
-    fixture["equipo_1"] = fixture["equipo_1"].apply(team_label)
-    fixture["equipo_2"] = fixture["equipo_2"].apply(team_label)
+
+    fixture = fixture.rename(columns={
+        "partido": "N°",
+        "fase": "Fase",
+        "fecha": "Fecha",
+        "hora_peru": "Hora Perú",
+        "grupo": "Grupo",
+        "equipo_1": "Equipo 1",
+        "equipo_2": "Equipo 2",
+        "sede": "Sede",
+    })
+
     st.dataframe(fixture, hide_index=True, use_container_width=True)
 
 def main():
