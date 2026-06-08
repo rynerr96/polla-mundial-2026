@@ -357,6 +357,20 @@ def get_all_participants():
     return df
 
 
+def delete_participant(participant_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # Primero elimina sus pronósticos para que desaparezca del ranking.
+    cur.execute("DELETE FROM predictions WHERE participant_id=?", (participant_id,))
+
+    # Luego elimina al participante.
+    cur.execute("DELETE FROM participants WHERE id=?", (participant_id,))
+
+    conn.commit()
+    conn.close()
+
+
 def verify_or_register(name: str, code: str):
     name = name.strip()
     code = code.strip()
@@ -773,6 +787,38 @@ def admin_page():
         st.success("Resultados guardados correctamente.")
         st.rerun()
 
+    st.divider()
+    st.subheader("👥 Gestión de participantes")
+    st.caption("Desde aquí puedes eliminar usuarios de prueba. Al eliminar un participante, también se borran sus pronósticos.")
+
+    participants = get_all_participants()
+
+    if participants.empty:
+        st.info("No hay participantes registrados.")
+    else:
+        selected_name = st.selectbox(
+            "Selecciona participante para eliminar",
+            participants["name"].tolist(),
+            key="delete_participant_select"
+        )
+
+        selected_id = int(
+            participants.loc[participants["name"] == selected_name, "id"].iloc[0]
+        )
+
+        confirm_delete = st.checkbox(
+            f"Confirmo que deseo eliminar a {selected_name}",
+            key="confirm_delete_participant"
+        )
+
+        if st.button("🗑️ Eliminar participante", type="secondary"):
+            if confirm_delete:
+                delete_participant(selected_id)
+                st.success(f"Participante {selected_name} eliminado correctamente.")
+                st.rerun()
+            else:
+                st.warning("Marca la confirmación antes de eliminar.")
+
 
 def ranking_page():
     st.subheader("🏆 Ranking general")
@@ -811,6 +857,7 @@ def fixture_page():
     })
 
     st.dataframe(fixture, hide_index=True, use_container_width=True)
+
 
 def main():
     init_db()
