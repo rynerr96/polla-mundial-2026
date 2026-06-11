@@ -1,34 +1,25 @@
 import os
-import io
-import zipfile
-import sqlite3
 import hashlib
 import html
 import re
-from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+from supabase import create_client
 
-try:
-    from supabase import create_client
-except Exception:
-    create_client = None
 
 APP_TITLE = "Polla Mundial 2026"
-DB_PATH = Path("polla_mundial_2026.db")
-FIXTURE_PATH = Path("fixture.csv")
+FIXTURE_PATH = "fixture.csv"
 
-# Puntaje base. Puedes cambiarlo luego.
+# Puntaje base
 PUNTOS_MARCADOR_EXACTO = 10
 PUNTOS_RESULTADO_CORRECTO = 5
 PUNTOS_GOLES_UN_EQUIPO = 2
 PUNTOS_DIFERENCIA_GOLES = 3
 
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin2026")
-
 PERU_TZ = ZoneInfo("America/Lima")
 
 
@@ -152,11 +143,6 @@ CUSTOM_CSS = """
     color: #0f172a;
 }
 
-.flag {
-    font-size: 1.35rem;
-    margin-right: .35rem;
-}
-
 .winner-tag {
     display: inline-block;
     background: #dcfce7;
@@ -196,68 +182,30 @@ CUSTOM_CSS = """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
+def get_secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(name, "")
+        if value:
+            return value
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+
+@st.cache_resource
+def get_supabase_client():
+    url = get_secret("SUPABASE_URL")
+    key = get_secret("SUPABASE_KEY")
+
+    if not url or not key:
+        st.error("Faltan SUPABASE_URL y/o SUPABASE_KEY en Streamlit Secrets.")
+        st.stop()
+
+    return create_client(url, key)
+
+
 def hash_code(code: str) -> str:
     return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
-
-
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            code_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS predictions (
-            participant_id INTEGER NOT NULL,
-            match_id INTEGER NOT NULL,
-            goals_a INTEGER,
-            goals_b INTEGER,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (participant_id, match_id),
-            FOREIGN KEY (participant_id) REFERENCES participants(id)
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS results (
-            match_id INTEGER PRIMARY KEY,
-            goals_a INTEGER,
-            goals_b INTEGER,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS match_overrides (
-            match_id INTEGER PRIMARY KEY,
-            status TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-
-    conn.commit()
-    conn.close()
 
 
 @st.cache_data
@@ -265,7 +213,6 @@ def load_fixture():
     df = pd.read_csv(FIXTURE_PATH)
     df["partido"] = df["partido"].astype(int)
     return df
-
 
 
 TEAM_CODE_MAP = {
@@ -326,7 +273,6 @@ def flag_img(team: str) -> str:
     if not code:
         return "<span style='font-size:1.25rem;margin-right:8px;'>🏳️</span>"
 
-    # Usamos imágenes reales para evitar que Windows muestre banderas blancas.
     return (
         f"<img src='https://flagcdn.com/w40/{code}.png' "
         f"alt='{html.escape(team)}' "
@@ -341,23 +287,7 @@ def team_label(team: str) -> str:
     return f"{flag_img(team)}{html.escape(team)}"
 
 
-def team_flag(team: str) -> str:
-    return flag_img(team)
-
-
 def parse_match_start(row):
-    """
-    Convierte la fecha y hora del fixture a datetime con zona horaria de Perú.
-
-    Corrige horas en formato peruano/español:
-    - 2:00 p.m.  -> 14:00
-    - 9:00 p.m.  -> 21:00
-    - 11:00 p.m. -> 23:00
-    - 12:00 m.   -> 12:00
-    - 12:00 a.m. -> 00:00
-
-    Si no puede interpretar la fecha/hora, devuelve None.
-    """
     fecha = str(row.get("fecha", row.get("Fecha", ""))).strip()
     hora_original = str(row.get("hora_peru", row.get("Hora Perú", ""))).strip().lower()
 
@@ -392,8 +322,7 @@ def parse_match_start(row):
         if hour == 12:
             hour = 12
 
-    hora_limpia = f"{hour:02d}:{minute:02d}"
-    fecha_hora = f"{fecha} {hora_limpia}"
+    fecha_hora = f"{fecha} {hour:02d}:{minute:02d}"
 
     formatos = [
         "%d/%m/%Y %H:%M",
@@ -418,15 +347,23 @@ def parse_match_start(row):
         return None
 
 
-def match_has_started(row, now=None) -> bool:
-    """
-    Devuelve True si el partido está cerrado.
+def get_match_override(match_id: int):
+    supabase = get_supabase_client()
+    data = (
+        supabase.table("match_overrides")
+        .select("status")
+        .eq("match_id", int(match_id))
+        .execute()
+        .data
+    )
 
-    Prioridad:
-    1. Si el administrador lo abrió manualmente: NO se cierra aunque ya haya llegado la hora.
-    2. Si el administrador lo cerró manualmente: se cierra.
-    3. Si está en automático: se cierra por hora oficial Perú.
-    """
+    if not data:
+        return "automatico"
+
+    return data[0]["status"]
+
+
+def match_has_started(row, now=None) -> bool:
     match_id = int(row.get("partido", row.get("N°", 0)))
     override = get_match_override(match_id)
 
@@ -439,7 +376,6 @@ def match_has_started(row, now=None) -> bool:
     start = parse_match_start(row)
 
     if start is None:
-        # Si no se puede leer la fecha, no bloqueamos para evitar errores.
         return False
 
     now = now or datetime.now(PERU_TZ)
@@ -467,51 +403,55 @@ def match_status_text(row) -> str:
     return "🟢 Abierto hasta la hora oficial"
 
 
-def get_participant(name: str):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT * FROM participants WHERE LOWER(name)=LOWER(?)",
-        (name.strip(),),
-    ).fetchone()
-    conn.close()
-    return row
-
-
-def create_participant(name: str, code: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO participants(name, code_hash, created_at) VALUES (?, ?, ?)",
-        (name.strip(), hash_code(code), datetime.now().isoformat(timespec="seconds")),
-    )
-    conn.commit()
-    row = conn.execute(
-        "SELECT * FROM participants WHERE LOWER(name)=LOWER(?)",
-        (name.strip(),),
-    ).fetchone()
-    conn.close()
-    return row
+def df_from_table(table_name: str, order_col: str | None = None) -> pd.DataFrame:
+    supabase = get_supabase_client()
+    query = supabase.table(table_name).select("*")
+    if order_col:
+        query = query.order(order_col)
+    data = query.execute().data or []
+    return pd.DataFrame(data)
 
 
 def get_all_participants():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT id, name, created_at FROM participants ORDER BY name", conn)
-    conn.close()
+    df = df_from_table("participants", "name")
+    if df.empty:
+        return pd.DataFrame(columns=["id", "name", "created_at"])
     return df
 
 
+def get_participant(name: str):
+    name_clean = name.strip().lower()
+    participants = get_all_participants()
+
+    if participants.empty:
+        return None
+
+    matches = participants[participants["name"].str.lower() == name_clean]
+
+    if matches.empty:
+        return None
+
+    return matches.iloc[0].to_dict()
+
+
+def create_participant(name: str, code: str):
+    supabase = get_supabase_client()
+    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
+
+    payload = {
+        "name": name.strip(),
+        "code_hash": hash_code(code),
+        "created_at": now,
+    }
+
+    supabase.table("participants").insert(payload).execute()
+    return get_participant(name)
+
+
 def delete_participant(participant_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    # Primero elimina sus pronósticos para que desaparezca del ranking.
-    cur.execute("DELETE FROM predictions WHERE participant_id=?", (participant_id,))
-
-    # Luego elimina al participante.
-    cur.execute("DELETE FROM participants WHERE id=?", (participant_id,))
-
-    conn.commit()
-    conn.close()
+    supabase = get_supabase_client()
+    supabase.table("predictions").delete().eq("participant_id", int(participant_id)).execute()
+    supabase.table("participants").delete().eq("id", int(participant_id)).execute()
 
 
 def verify_or_register(name: str, code: str):
@@ -527,7 +467,7 @@ def verify_or_register(name: str, code: str):
         try:
             participant = create_participant(name, code)
             return participant, f"Registro creado para {name}."
-        except sqlite3.IntegrityError:
+        except Exception:
             return None, "Ese nombre ya está registrado. Intenta iniciar sesión con tu código."
 
     if existing["code_hash"] != hash_code(code):
@@ -551,28 +491,29 @@ def outcome(goals_a, goals_b, team_a, team_b):
 
 
 def get_predictions(participant_id: int):
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT match_id, goals_a, goals_b FROM predictions WHERE participant_id=?",
-        conn,
-        params=(participant_id,),
+    supabase = get_supabase_client()
+    data = (
+        supabase.table("predictions")
+        .select("match_id, goals_a, goals_b")
+        .eq("participant_id", int(participant_id))
+        .execute()
+        .data
+        or []
     )
-    conn.close()
-    return df
+    return pd.DataFrame(data)
 
 
 def save_predictions(participant_id: int, edited: pd.DataFrame):
-    conn = get_conn()
-    cur = conn.cursor()
+    supabase = get_supabase_client()
     now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
-
     fixture = load_fixture()
+
     fixture_by_match = {
         int(row["partido"]): row
         for _, row in fixture.iterrows()
     }
 
-    saved_count = 0
+    records = []
     blocked_count = 0
 
     for _, row in edited.iterrows():
@@ -592,83 +533,34 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
         if ga is None and gb is None:
             continue
 
-        cur.execute(
-            """
-            INSERT INTO predictions(participant_id, match_id, goals_a, goals_b, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(participant_id, match_id)
-            DO UPDATE SET goals_a=excluded.goals_a, goals_b=excluded.goals_b, updated_at=excluded.updated_at
-            """,
-            (participant_id, match_id, ga, gb, now),
-        )
-        saved_count += 1
+        records.append({
+            "participant_id": int(participant_id),
+            "match_id": int(match_id),
+            "goals_a": ga,
+            "goals_b": gb,
+            "updated_at": now,
+        })
 
-    conn.commit()
-    conn.close()
+    if records:
+        supabase.table("predictions").upsert(
+            records,
+            on_conflict="participant_id,match_id"
+        ).execute()
 
-    return saved_count, blocked_count
-
-
-def get_match_overrides():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT match_id, status FROM match_overrides", conn)
-    conn.close()
-    return df
-
-
-def get_match_override(match_id: int):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT status FROM match_overrides WHERE match_id=?",
-        (int(match_id),),
-    ).fetchone()
-    conn.close()
-
-    if row is None:
-        return "automatico"
-
-    return row["status"]
-
-
-def set_match_override(match_id: int, status: str):
-    """
-    status puede ser:
-    - automatico: se elimina el override y manda la hora oficial.
-    - abierto: el admin mantiene el partido abierto aunque la hora haya llegado.
-    - cerrado: el admin cierra el partido manualmente.
-    """
-    conn = get_conn()
-    cur = conn.cursor()
-    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
-
-    if status == "automatico":
-        cur.execute("DELETE FROM match_overrides WHERE match_id=?", (int(match_id),))
-    else:
-        cur.execute(
-            """
-            INSERT INTO match_overrides(match_id, status, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(match_id)
-            DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at
-            """,
-            (int(match_id), status, now),
-        )
-
-    conn.commit()
-    conn.close()
+    return len(records), blocked_count
 
 
 def get_results():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT match_id, goals_a, goals_b FROM results", conn)
-    conn.close()
+    df = df_from_table("results")
+    if df.empty:
+        return pd.DataFrame(columns=["match_id", "goals_a", "goals_b"])
     return df
 
 
 def save_results(edited: pd.DataFrame):
-    conn = get_conn()
-    cur = conn.cursor()
-    now = datetime.now().isoformat(timespec="seconds")
+    supabase = get_supabase_client()
+    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
+    records = []
 
     for _, row in edited.iterrows():
         match_id = int(row["partido"])
@@ -681,18 +573,39 @@ def save_results(edited: pd.DataFrame):
         if ga is None and gb is None:
             continue
 
-        cur.execute(
-            """
-            INSERT INTO results(match_id, goals_a, goals_b, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(match_id)
-            DO UPDATE SET goals_a=excluded.goals_a, goals_b=excluded.goals_b, updated_at=excluded.updated_at
-            """,
-            (match_id, ga, gb, now),
-        )
+        records.append({
+            "match_id": match_id,
+            "goals_a": ga,
+            "goals_b": gb,
+            "updated_at": now,
+        })
 
-    conn.commit()
-    conn.close()
+    if records:
+        supabase.table("results").upsert(records, on_conflict="match_id").execute()
+
+
+def get_match_overrides():
+    df = df_from_table("match_overrides")
+    if df.empty:
+        return pd.DataFrame(columns=["match_id", "status"])
+    return df
+
+
+def set_match_override(match_id: int, status: str):
+    supabase = get_supabase_client()
+    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
+
+    if status == "automatico":
+        supabase.table("match_overrides").delete().eq("match_id", int(match_id)).execute()
+    else:
+        supabase.table("match_overrides").upsert(
+            {
+                "match_id": int(match_id),
+                "status": status,
+                "updated_at": now,
+            },
+            on_conflict="match_id"
+        ).execute()
 
 
 def calculate_points(pred_a, pred_b, real_a, real_b):
@@ -725,19 +638,24 @@ def calculate_points(pred_a, pred_b, real_a, real_b):
 
 
 def build_ranking():
-    fixture = load_fixture()
     results = get_results().rename(columns={"match_id": "partido", "goals_a": "real_a", "goals_b": "real_b"})
     participants = get_all_participants()
-
-    conn = get_conn()
-    predictions = pd.read_sql_query(
-        "SELECT participant_id, match_id, goals_a AS pred_a, goals_b AS pred_b FROM predictions",
-        conn,
-    )
-    conn.close()
+    predictions = df_from_table("predictions").rename(columns={"goals_a": "pred_a", "goals_b": "pred_b"})
 
     if participants.empty:
         return pd.DataFrame(columns=["Puesto", "Participante", "Puntaje", "Pronósticos llenados"])
+
+    if predictions.empty:
+        scores = []
+        for _, p in participants.iterrows():
+            scores.append({
+                "Participante": p["name"],
+                "Puntaje": 0,
+                "Pronósticos llenados": 0,
+            })
+        ranking = pd.DataFrame(scores).sort_values("Participante").reset_index(drop=True)
+        ranking.insert(0, "Puesto", ranking.index + 1)
+        return ranking
 
     merged = predictions.merge(results, left_on="match_id", right_on="partido", how="left")
 
@@ -776,6 +694,7 @@ def hero():
         unsafe_allow_html=True,
     )
 
+
 def stat_cards():
     fixture = load_fixture()
     participants = get_all_participants()
@@ -806,9 +725,11 @@ def participant_page():
     if submitted:
         participant, msg = verify_or_register(name, code)
         if participant:
-            st.session_state["participant_id"] = participant["id"]
+            st.session_state["participant_id"] = int(participant["id"])
             st.session_state["participant_name"] = participant["name"]
+            st.session_state["menu"] = "Mis pronósticos"
             st.success(msg)
+            st.rerun()
         else:
             st.error(msg)
 
@@ -817,8 +738,8 @@ def participant_page():
         if st.button("Cerrar sesión"):
             st.session_state.pop("participant_id", None)
             st.session_state.pop("participant_name", None)
+            st.session_state["menu"] = "Participante"
             st.rerun()
-
 
 
 def forecasts_page():
@@ -830,11 +751,18 @@ def forecasts_page():
     st.caption("Coloca solo los goles. Cada pronóstico se cierra automáticamente cuando inicia el partido.")
 
     fixture = load_fixture()
-    predictions = get_predictions(st.session_state["participant_id"]).rename(
-        columns={"match_id": "partido", "goals_a": "pred_a", "goals_b": "pred_b"}
-    )
+    predictions = get_predictions(st.session_state["participant_id"])
 
-    data = fixture.merge(predictions, on="partido", how="left")
+    if not predictions.empty:
+        predictions = predictions.rename(
+            columns={"match_id": "partido", "goals_a": "pred_a", "goals_b": "pred_b"}
+        )
+
+    data = fixture.merge(predictions, on="partido", how="left") if not predictions.empty else fixture.copy()
+    if "pred_a" not in data.columns:
+        data["pred_a"] = None
+    if "pred_b" not in data.columns:
+        data["pred_b"] = None
 
     fase_options = ["Todas"] + sorted(data["fase"].dropna().unique().tolist())
     fase = st.selectbox("Filtrar por fase", fase_options)
@@ -956,132 +884,6 @@ def forecasts_page():
 
         st.rerun()
 
-def clean_records(df: pd.DataFrame):
-    if df is None or df.empty:
-        return []
-
-    clean_df = df.copy()
-    clean_df = clean_df.where(pd.notnull(clean_df), None)
-    return clean_df.to_dict(orient="records")
-
-
-def sqlite_table_to_df(table_name: str):
-    if not DB_PATH.exists():
-        return pd.DataFrame()
-
-    try:
-        conn = get_conn()
-        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-        conn.close()
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-def build_sqlite_backup_zip():
-    buffer = io.BytesIO()
-    tables = ["participants", "predictions", "results", "match_overrides"]
-
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
-        for table in tables:
-            df = sqlite_table_to_df(table)
-            csv_data = df.to_csv(index=False).encode("utf-8-sig")
-            z.writestr(f"{table}.csv", csv_data)
-
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
-def get_supabase_admin_client():
-    if create_client is None:
-        return None, "Falta instalar la librería supabase. Agrega supabase en requirements.txt."
-
-    try:
-        url = st.secrets.get("SUPABASE_URL", "")
-        key = st.secrets.get("SUPABASE_KEY", "")
-    except Exception:
-        return None, "No se pudieron leer los Secrets de Streamlit."
-
-    if not url or not key:
-        return None, "Faltan SUPABASE_URL y/o SUPABASE_KEY en Streamlit Secrets."
-
-    try:
-        return create_client(url, key), None
-    except Exception as e:
-        return None, f"No se pudo crear el cliente Supabase: {e}"
-
-
-def migrate_sqlite_to_supabase():
-    supabase, error = get_supabase_admin_client()
-    if error:
-        return False, error
-
-    tables_config = [
-        ("participants", "id"),
-        ("predictions", "participant_id,match_id"),
-        ("results", "match_id"),
-        ("match_overrides", "match_id"),
-    ]
-
-    summary = []
-
-    for table_name, conflict_cols in tables_config:
-        df = sqlite_table_to_df(table_name)
-        records = clean_records(df)
-
-        if not records:
-            summary.append(f"{table_name}: 0 registros")
-            continue
-
-        try:
-            supabase.table(table_name).upsert(records, on_conflict=conflict_cols).execute()
-            summary.append(f"{table_name}: {len(records)} registros migrados")
-        except Exception as e:
-            return False, f"Error migrando {table_name}: {e}"
-
-    return True, " | ".join(summary)
-
-
-def backup_and_migration_section():
-    st.divider()
-    st.subheader("🛡️ Respaldo y migración segura")
-    st.caption("Primero descarga un respaldo de SQLite y luego migra los datos actuales a Supabase.")
-
-    tables = ["participants", "predictions", "results", "match_overrides"]
-    counts = []
-
-    for table in tables:
-        df = sqlite_table_to_df(table)
-        counts.append({"Tabla": table, "Registros actuales": len(df)})
-
-    st.dataframe(pd.DataFrame(counts), hide_index=True, use_container_width=True)
-
-    backup_bytes = build_sqlite_backup_zip()
-    st.download_button(
-        label="⬇️ Descargar respaldo ZIP",
-        data=backup_bytes,
-        file_name="backup_polla_mundial_sqlite.zip",
-        mime="application/zip",
-        help="Descarga una copia CSV de participantes, pronósticos, resultados y estados manuales."
-    )
-
-    st.warning("Primero descarga el respaldo. Luego, si ya configuraste SUPABASE_URL y SUPABASE_KEY en Streamlit Secrets, puedes migrar.")
-
-    confirm_migration = st.checkbox(
-        "Confirmo que ya descargué el respaldo y deseo migrar los datos actuales a Supabase",
-        key="confirm_sqlite_to_supabase"
-    )
-
-    if st.button("🚀 Migrar datos actuales a Supabase", type="primary"):
-        if not confirm_migration:
-            st.warning("Marca la confirmación antes de migrar.")
-        else:
-            ok, msg = migrate_sqlite_to_supabase()
-            if ok:
-                st.success(f"Migración completada: {msg}")
-            else:
-                st.error(msg)
-
 
 def admin_page():
     st.subheader("🔐 Administrador: resultados reales")
@@ -1092,8 +894,6 @@ def admin_page():
     if admin_code != ADMIN_CODE:
         st.info("Ingresa el código de administrador para editar resultados.")
         return
-
-    backup_and_migration_section()
 
     fixture = load_fixture()
     results = get_results().rename(
@@ -1141,7 +941,6 @@ def admin_page():
         save_results(edited)
         st.success("Resultados guardados correctamente.")
         st.rerun()
-
 
     st.divider()
     st.subheader("🔒 Apertura y cierre manual de partidos")
@@ -1220,7 +1019,6 @@ def admin_page():
         })
         st.dataframe(status_view, hide_index=True, use_container_width=True)
 
-
     st.divider()
     st.subheader("👥 Gestión de participantes")
     st.caption("Desde aquí puedes eliminar usuarios de prueba. Al eliminar un participante, también se borran sus pronósticos.")
@@ -1294,7 +1092,6 @@ def fixture_page():
 
 
 def main():
-    init_db()
     hero()
     stat_cards()
 
@@ -1304,7 +1101,15 @@ def main():
     if admin_mode:
         menu_items.append("Administrador")
 
-    menu = st.sidebar.radio("Menú", menu_items)
+    if "menu" not in st.session_state or st.session_state["menu"] not in menu_items:
+        st.session_state["menu"] = "Participante"
+
+    menu = st.sidebar.radio(
+        "Menú",
+        menu_items,
+        index=menu_items.index(st.session_state["menu"]),
+        key="menu"
+    )
 
     if menu == "Participante":
         participant_page()
@@ -1322,5 +1127,7 @@ def main():
     if not admin_mode:
         st.sidebar.caption("Panel de administración oculto.")
 
+
 if __name__ == "__main__":
     main()
+
