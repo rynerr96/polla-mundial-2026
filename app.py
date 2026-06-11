@@ -1,12 +1,21 @@
 import os
+import io
+import zipfile
 import sqlite3
 import hashlib
 import html
+import re
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from supabase import create_client
+except Exception:
+    create_client = None
 
 APP_TITLE = "Polla Mundial 2026"
 DB_PATH = Path("polla_mundial_2026.db")
@@ -19,6 +28,8 @@ PUNTOS_GOLES_UN_EQUIPO = 2
 PUNTOS_DIFERENCIA_GOLES = 3
 
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin2026")
+
+PERU_TZ = ZoneInfo("America/Lima")
 
 
 st.set_page_config(
@@ -235,6 +246,16 @@ def init_db():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS match_overrides (
+            match_id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -322,6 +343,128 @@ def team_label(team: str) -> str:
 
 def team_flag(team: str) -> str:
     return flag_img(team)
+
+
+def parse_match_start(row):
+    """
+    Convierte la fecha y hora del fixture a datetime con zona horaria de Perú.
+
+    Corrige horas en formato peruano/español:
+    - 2:00 p.m.  -> 14:00
+    - 9:00 p.m.  -> 21:00
+    - 11:00 p.m. -> 23:00
+    - 12:00 m.   -> 12:00
+    - 12:00 a.m. -> 00:00
+
+    Si no puede interpretar la fecha/hora, devuelve None.
+    """
+    fecha = str(row.get("fecha", row.get("Fecha", ""))).strip()
+    hora_original = str(row.get("hora_peru", row.get("Hora Perú", ""))).strip().lower()
+
+    if not fecha or fecha.lower() in ["nan", "none"]:
+        return None
+
+    hora_match = re.search(r"(\d{1,2}):(\d{2})", hora_original)
+    if not hora_match:
+        return None
+
+    hour = int(hora_match.group(1))
+    minute = int(hora_match.group(2))
+
+    hora_norm = (
+        hora_original
+        .replace(" ", "")
+        .replace("a. m.", "a.m.")
+        .replace("p. m.", "p.m.")
+        .replace("a.m.", "am")
+        .replace("p.m.", "pm")
+        .replace("a.m", "am")
+        .replace("p.m", "pm")
+    )
+
+    if "pm" in hora_norm:
+        if hour != 12:
+            hour += 12
+    elif "am" in hora_norm:
+        if hour == 12:
+            hour = 0
+    elif "m." in hora_original or hora_original.endswith("m"):
+        if hour == 12:
+            hour = 12
+
+    hora_limpia = f"{hour:02d}:{minute:02d}"
+    fecha_hora = f"{fecha} {hora_limpia}"
+
+    formatos = [
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%d/%m/%y %H:%M",
+    ]
+
+    for fmt in formatos:
+        try:
+            dt = datetime.strptime(fecha_hora, fmt)
+            return dt.replace(tzinfo=PERU_TZ)
+        except ValueError:
+            pass
+
+    try:
+        dt = pd.to_datetime(fecha_hora, dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            return None
+        return dt.to_pydatetime().replace(tzinfo=PERU_TZ)
+    except Exception:
+        return None
+
+
+def match_has_started(row, now=None) -> bool:
+    """
+    Devuelve True si el partido está cerrado.
+
+    Prioridad:
+    1. Si el administrador lo abrió manualmente: NO se cierra aunque ya haya llegado la hora.
+    2. Si el administrador lo cerró manualmente: se cierra.
+    3. Si está en automático: se cierra por hora oficial Perú.
+    """
+    match_id = int(row.get("partido", row.get("N°", 0)))
+    override = get_match_override(match_id)
+
+    if override == "abierto":
+        return False
+
+    if override == "cerrado":
+        return True
+
+    start = parse_match_start(row)
+
+    if start is None:
+        # Si no se puede leer la fecha, no bloqueamos para evitar errores.
+        return False
+
+    now = now or datetime.now(PERU_TZ)
+    return now >= start
+
+
+def match_status_text(row) -> str:
+    match_id = int(row.get("partido", row.get("N°", 0)))
+    override = get_match_override(match_id)
+
+    if override == "abierto":
+        return "🟢 Abierto manualmente"
+
+    if override == "cerrado":
+        return "🔒 Cerrado manualmente"
+
+    start = parse_match_start(row)
+
+    if start is None:
+        return "Horario no reconocido"
+
+    if match_has_started(row):
+        return "🔒 Cerrado por hora oficial"
+
+    return "🟢 Abierto hasta la hora oficial"
 
 
 def get_participant(name: str):
@@ -421,10 +564,25 @@ def get_predictions(participant_id: int):
 def save_predictions(participant_id: int, edited: pd.DataFrame):
     conn = get_conn()
     cur = conn.cursor()
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
+
+    fixture = load_fixture()
+    fixture_by_match = {
+        int(row["partido"]): row
+        for _, row in fixture.iterrows()
+    }
+
+    saved_count = 0
+    blocked_count = 0
 
     for _, row in edited.iterrows():
         match_id = int(row["partido"])
+
+        fixture_row = fixture_by_match.get(match_id)
+        if fixture_row is not None and match_has_started(fixture_row):
+            blocked_count += 1
+            continue
+
         ga = row.get("Tu gol equipo 1")
         gb = row.get("Tu gol equipo 2")
 
@@ -442,6 +600,58 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
             DO UPDATE SET goals_a=excluded.goals_a, goals_b=excluded.goals_b, updated_at=excluded.updated_at
             """,
             (participant_id, match_id, ga, gb, now),
+        )
+        saved_count += 1
+
+    conn.commit()
+    conn.close()
+
+    return saved_count, blocked_count
+
+
+def get_match_overrides():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT match_id, status FROM match_overrides", conn)
+    conn.close()
+    return df
+
+
+def get_match_override(match_id: int):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT status FROM match_overrides WHERE match_id=?",
+        (int(match_id),),
+    ).fetchone()
+    conn.close()
+
+    if row is None:
+        return "automatico"
+
+    return row["status"]
+
+
+def set_match_override(match_id: int, status: str):
+    """
+    status puede ser:
+    - automatico: se elimina el override y manda la hora oficial.
+    - abierto: el admin mantiene el partido abierto aunque la hora haya llegado.
+    - cerrado: el admin cierra el partido manualmente.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
+
+    if status == "automatico":
+        cur.execute("DELETE FROM match_overrides WHERE match_id=?", (int(match_id),))
+    else:
+        cur.execute(
+            """
+            INSERT INTO match_overrides(match_id, status, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(match_id)
+            DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at
+            """,
+            (int(match_id), status, now),
         )
 
     conn.commit()
@@ -617,7 +827,7 @@ def forecasts_page():
         return
 
     st.subheader(f"📝 Mis pronósticos: {st.session_state['participant_name']}")
-    st.caption("Coloca solo los goles. El sistema calcula automáticamente ganador y perdedor antes de guardar.")
+    st.caption("Coloca solo los goles. Cada pronóstico se cierra automáticamente cuando inicia el partido.")
 
     fixture = load_fixture()
     predictions = get_predictions(st.session_state["participant_id"]).rename(
@@ -653,6 +863,8 @@ def forecasts_page():
 
         default_a = None if pd.isna(row.get("pred_a")) else int(row.get("pred_a"))
         default_b = None if pd.isna(row.get("pred_b")) else int(row.get("pred_b"))
+        started = match_has_started(row)
+        status_text = match_status_text(row)
 
         st.markdown('<div class="match-card">', unsafe_allow_html=True)
 
@@ -660,6 +872,10 @@ def forecasts_page():
         with top1:
             st.markdown(f"**N° {match_id}**")
             st.markdown(f"<div class='match-meta'>{row['fecha']} · {row['hora_peru']}</div>", unsafe_allow_html=True)
+            if started:
+                st.markdown(f"<span class='loser-tag'>{status_text}</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span class='winner-tag'>{status_text}</span>", unsafe_allow_html=True)
         with top2:
             st.markdown(f"**{row['fase']}**")
             st.markdown(f"<div class='match-meta'>{row['grupo']} · {row['sede']}</div>", unsafe_allow_html=True)
@@ -678,6 +894,7 @@ def forecasts_page():
                 placeholder="",
                 label_visibility="collapsed",
                 key=f"pred_a_{match_id}",
+                disabled=started,
             )
         with c3:
             st.markdown("<h3 style='text-align:center;margin-top:0.05rem;'>-</h3>", unsafe_allow_html=True)
@@ -691,6 +908,7 @@ def forecasts_page():
                 placeholder="",
                 label_visibility="collapsed",
                 key=f"pred_b_{match_id}",
+                disabled=started,
             )
         with c5:
             st.markdown(f"<div class='team-name'>{team_label(team_b)}</div>", unsafe_allow_html=True)
@@ -726,9 +944,144 @@ def forecasts_page():
     st.divider()
 
     if st.button("💾 Guardar mis pronósticos", type="primary"):
-        save_predictions(st.session_state["participant_id"], edited)
-        st.success("Pronósticos guardados correctamente.")
+        saved_count, blocked_count = save_predictions(st.session_state["participant_id"], edited)
+
+        if saved_count > 0:
+            st.success(f"Pronósticos guardados correctamente: {saved_count} partido(s).")
+        else:
+            st.info("No se guardaron nuevos pronósticos.")
+
+        if blocked_count > 0:
+            st.warning(f"{blocked_count} partido(s) ya estaban cerrados y no fueron modificados.")
+
         st.rerun()
+
+def clean_records(df: pd.DataFrame):
+    if df is None or df.empty:
+        return []
+
+    clean_df = df.copy()
+    clean_df = clean_df.where(pd.notnull(clean_df), None)
+    return clean_df.to_dict(orient="records")
+
+
+def sqlite_table_to_df(table_name: str):
+    if not DB_PATH.exists():
+        return pd.DataFrame()
+
+    try:
+        conn = get_conn()
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def build_sqlite_backup_zip():
+    buffer = io.BytesIO()
+    tables = ["participants", "predictions", "results", "match_overrides"]
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        for table in tables:
+            df = sqlite_table_to_df(table)
+            csv_data = df.to_csv(index=False).encode("utf-8-sig")
+            z.writestr(f"{table}.csv", csv_data)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def get_supabase_admin_client():
+    if create_client is None:
+        return None, "Falta instalar la librería supabase. Agrega supabase en requirements.txt."
+
+    try:
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_KEY", "")
+    except Exception:
+        return None, "No se pudieron leer los Secrets de Streamlit."
+
+    if not url or not key:
+        return None, "Faltan SUPABASE_URL y/o SUPABASE_KEY en Streamlit Secrets."
+
+    try:
+        return create_client(url, key), None
+    except Exception as e:
+        return None, f"No se pudo crear el cliente Supabase: {e}"
+
+
+def migrate_sqlite_to_supabase():
+    supabase, error = get_supabase_admin_client()
+    if error:
+        return False, error
+
+    tables_config = [
+        ("participants", "id"),
+        ("predictions", "participant_id,match_id"),
+        ("results", "match_id"),
+        ("match_overrides", "match_id"),
+    ]
+
+    summary = []
+
+    for table_name, conflict_cols in tables_config:
+        df = sqlite_table_to_df(table_name)
+        records = clean_records(df)
+
+        if not records:
+            summary.append(f"{table_name}: 0 registros")
+            continue
+
+        try:
+            supabase.table(table_name).upsert(records, on_conflict=conflict_cols).execute()
+            summary.append(f"{table_name}: {len(records)} registros migrados")
+        except Exception as e:
+            return False, f"Error migrando {table_name}: {e}"
+
+    return True, " | ".join(summary)
+
+
+def backup_and_migration_section():
+    st.divider()
+    st.subheader("🛡️ Respaldo y migración segura")
+    st.caption("Primero descarga un respaldo de SQLite y luego migra los datos actuales a Supabase.")
+
+    tables = ["participants", "predictions", "results", "match_overrides"]
+    counts = []
+
+    for table in tables:
+        df = sqlite_table_to_df(table)
+        counts.append({"Tabla": table, "Registros actuales": len(df)})
+
+    st.dataframe(pd.DataFrame(counts), hide_index=True, use_container_width=True)
+
+    backup_bytes = build_sqlite_backup_zip()
+    st.download_button(
+        label="⬇️ Descargar respaldo ZIP",
+        data=backup_bytes,
+        file_name="backup_polla_mundial_sqlite.zip",
+        mime="application/zip",
+        help="Descarga una copia CSV de participantes, pronósticos, resultados y estados manuales."
+    )
+
+    st.warning("Primero descarga el respaldo. Luego, si ya configuraste SUPABASE_URL y SUPABASE_KEY en Streamlit Secrets, puedes migrar.")
+
+    confirm_migration = st.checkbox(
+        "Confirmo que ya descargué el respaldo y deseo migrar los datos actuales a Supabase",
+        key="confirm_sqlite_to_supabase"
+    )
+
+    if st.button("🚀 Migrar datos actuales a Supabase", type="primary"):
+        if not confirm_migration:
+            st.warning("Marca la confirmación antes de migrar.")
+        else:
+            ok, msg = migrate_sqlite_to_supabase()
+            if ok:
+                st.success(f"Migración completada: {msg}")
+            else:
+                st.error(msg)
+
 
 def admin_page():
     st.subheader("🔐 Administrador: resultados reales")
@@ -786,6 +1139,85 @@ def admin_page():
         save_results(edited)
         st.success("Resultados guardados correctamente.")
         st.rerun()
+
+
+    st.divider()
+    st.subheader("🔒 Apertura y cierre manual de partidos")
+    st.caption("La app cierra automáticamente por hora oficial Perú. Aquí puedes forzar un partido como cerrado o abierto si ocurre un retraso, error de horario o caso especial.")
+
+    fixture_admin_status = load_fixture().copy()
+    overrides_df = get_match_overrides()
+
+    if not overrides_df.empty:
+        fixture_admin_status = fixture_admin_status.merge(
+            overrides_df.rename(columns={"match_id": "partido"}),
+            on="partido",
+            how="left"
+        )
+    else:
+        fixture_admin_status["status"] = None
+
+    fixture_admin_status["Estado actual"] = fixture_admin_status.apply(match_status_text, axis=1)
+
+    fixture_admin_status["Partido"] = fixture_admin_status.apply(
+        lambda r: f"N° {int(r['partido'])} - {r['equipo_1']} vs {r['equipo_2']} | {r['fecha']} {r['hora_peru']}",
+        axis=1
+    )
+
+    selected_match_label = st.selectbox(
+        "Selecciona el partido",
+        fixture_admin_status["Partido"].tolist(),
+        key="manual_match_select"
+    )
+
+    selected_match_id = int(
+        fixture_admin_status.loc[
+            fixture_admin_status["Partido"] == selected_match_label,
+            "partido"
+        ].iloc[0]
+    )
+
+    selected_row = fixture_admin_status[
+        fixture_admin_status["partido"] == selected_match_id
+    ].iloc[0]
+
+    st.info(f"Estado actual: {match_status_text(selected_row)}")
+
+    c_auto, c_open, c_close = st.columns(3)
+
+    with c_auto:
+        if st.button("⏱️ Usar cierre automático", key="btn_auto_match"):
+            set_match_override(selected_match_id, "automatico")
+            st.success("El partido volvió al modo automático por hora oficial Perú.")
+            st.rerun()
+
+    with c_open:
+        if st.button("🟢 Abrir manualmente", key="btn_open_match"):
+            set_match_override(selected_match_id, "abierto")
+            st.success("Partido abierto manualmente. Los participantes podrán registrar o modificar este pronóstico.")
+            st.rerun()
+
+    with c_close:
+        if st.button("🔒 Cerrar manualmente", key="btn_close_match"):
+            set_match_override(selected_match_id, "cerrado")
+            st.success("Partido cerrado manualmente. Ya no se podrán modificar pronósticos de este partido.")
+            st.rerun()
+
+    with st.expander("Ver estado de todos los partidos"):
+        status_view = fixture_admin_status[[
+            "partido", "fase", "fecha", "hora_peru", "grupo",
+            "equipo_1", "equipo_2", "Estado actual"
+        ]].rename(columns={
+            "partido": "N°",
+            "fase": "Fase",
+            "fecha": "Fecha",
+            "hora_peru": "Hora Perú",
+            "grupo": "Grupo",
+            "equipo_1": "Equipo 1",
+            "equipo_2": "Equipo 2",
+        })
+        st.dataframe(status_view, hide_index=True, use_container_width=True)
+
 
     st.divider()
     st.subheader("👥 Gestión de participantes")
