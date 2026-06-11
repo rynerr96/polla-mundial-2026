@@ -176,70 +176,14 @@ html, body, [class*="css"] {
     font-size: 0.92rem;
 }
 
-.carousel-wrap {
-    margin: .4rem 0 1.2rem 0;
-}
 
-.carousel-title {
-    display: flex;
-    align-items: center;
-    gap: .45rem;
-    color: #0f172a;
-    font-size: 1.25rem;
-    font-weight: 900;
-    margin-bottom: .7rem;
-}
 
-.carousel {
-    display: flex;
-    gap: .85rem;
-    overflow-x: auto;
-    padding: .2rem .1rem 1rem .1rem;
-    scroll-snap-type: x mandatory;
-}
 
-.carousel::-webkit-scrollbar {
-    height: 8px;
-}
 
-.carousel::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 999px;
-}
 
-.feature-card {
-    min-width: 310px;
-    scroll-snap-align: start;
-    border-radius: 22px;
-    padding: 1rem;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,1) 100%);
-    border: 1px solid #dbeafe;
-    box-shadow: 0 10px 24px rgba(15,23,42,.075);
-}
 
-.feature-card .phase {
-    color: #64748b;
-    font-size: .8rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: .04em;
-}
 
-.feature-card .teams {
-    margin-top: .55rem;
-    color: #0f172a;
-    font-weight: 950;
-    font-size: 1.02rem;
-    line-height: 1.45;
-}
 
-.feature-card .meta {
-    margin-top: .55rem;
-    color: #475569;
-    font-size: .86rem;
-    line-height: 1.45;
-}
 
 .match-card {
     border-radius: 24px;
@@ -881,34 +825,6 @@ def hero():
 
 
 
-def featured_matches_carousel():
-    fixture = load_fixture().head(8).copy()
-
-    cards = []
-    for _, row in fixture.iterrows():
-        cards.append(
-            f"""
-            <div class="feature-card">
-                <div class="phase">Partido N° {int(row['partido'])} · {html.escape(str(row['fase']))}</div>
-                <div class="teams">{team_label(row['equipo_1'])}<br><span style="color:#64748b;font-weight:800;">vs</span><br>{team_label(row['equipo_2'])}</div>
-                <div class="meta">📅 {html.escape(str(row['fecha']))} · {html.escape(str(row['hora_peru']))}<br>🏟️ {html.escape(str(row['sede']))}</div>
-            </div>
-            """
-        )
-
-    st.markdown(
-        f"""
-        <div class="carousel-wrap">
-            <div class="carousel-title">🌎 Partidos destacados</div>
-            <div class="carousel">
-                {''.join(cards)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def stat_cards():
     fixture = load_fixture()
     participants = get_all_participants()
@@ -1307,7 +1223,6 @@ def fixture_page():
 
 def main():
     hero()
-    featured_matches_carousel()
     stat_cards()
 
     admin_mode = st.query_params.get("admin", "") == "1"
@@ -1361,5 +1276,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
