@@ -347,20 +347,31 @@ def parse_match_start(row):
         return None
 
 
+@st.cache_data(ttl=30)
+def get_match_override_map():
+    """
+    Lee todos los estados manuales una sola vez y los mantiene en caché breve.
+    Esto evita consultar Supabase partido por partido y reduce errores httpx.ReadError.
+    """
+    try:
+        supabase = get_supabase_client()
+        data = (
+            supabase.table("match_overrides")
+            .select("match_id,status")
+            .execute()
+            .data
+            or []
+        )
+        return {int(item["match_id"]): item["status"] for item in data}
+    except Exception:
+        # Si Supabase tiene una caída temporal, no rompemos la app:
+        # seguimos con modo automático por hora oficial.
+        return {}
+
+
 def get_match_override(match_id: int):
-    supabase = get_supabase_client()
-    data = (
-        supabase.table("match_overrides")
-        .select("status")
-        .eq("match_id", int(match_id))
-        .execute()
-        .data
-    )
-
-    if not data:
-        return "automatico"
-
-    return data[0]["status"]
+    override_map = get_match_override_map()
+    return override_map.get(int(match_id), "automatico")
 
 
 def match_has_started(row, now=None) -> bool:
@@ -404,12 +415,16 @@ def match_status_text(row) -> str:
 
 
 def df_from_table(table_name: str, order_col: str | None = None) -> pd.DataFrame:
-    supabase = get_supabase_client()
-    query = supabase.table(table_name).select("*")
-    if order_col:
-        query = query.order(order_col)
-    data = query.execute().data or []
-    return pd.DataFrame(data)
+    try:
+        supabase = get_supabase_client()
+        query = supabase.table(table_name).select("*")
+        if order_col:
+            query = query.order(order_col)
+        data = query.execute().data or []
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.warning(f"No se pudo leer temporalmente la tabla {table_name}. Intenta actualizar la página. Detalle: {type(e).__name__}")
+        return pd.DataFrame()
 
 
 def get_all_participants():
@@ -606,6 +621,9 @@ def set_match_override(match_id: int, status: str):
             },
             on_conflict="match_id"
         ).execute()
+
+    # Limpia el caché para que el cambio se vea al instante.
+    get_match_override_map.clear()
 
 
 def calculate_points(pred_a, pred_b, real_a, real_b):
@@ -1136,3 +1154,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
