@@ -727,7 +727,7 @@ def participant_page():
         if participant:
             st.session_state["participant_id"] = int(participant["id"])
             st.session_state["participant_name"] = participant["name"]
-            st.session_state["menu"] = "Mis pronósticos"
+            st.session_state["redirect_to_forecasts"] = True
             st.success(msg)
             st.rerun()
         else:
@@ -738,7 +738,7 @@ def participant_page():
         if st.button("Cerrar sesión"):
             st.session_state.pop("participant_id", None)
             st.session_state.pop("participant_name", None)
-            st.session_state["menu"] = "Participante"
+            st.session_state["redirect_to_participant"] = True
             st.rerun()
 
 
@@ -1101,6 +1101,12 @@ def main():
     if admin_mode:
         menu_items.append("Administrador")
 
+    if st.session_state.pop("redirect_to_forecasts", False):
+        st.session_state["menu"] = "Mis pronósticos"
+
+    if st.session_state.pop("redirect_to_participant", False):
+        st.session_state["menu"] = "Participante"
+
     if "menu" not in st.session_state or st.session_state["menu"] not in menu_items:
         st.session_state["menu"] = "Participante"
 
@@ -1130,4 +1136,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
