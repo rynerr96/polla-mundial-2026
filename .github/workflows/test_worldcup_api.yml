@@ -1,0 +1,25 @@
+name: Test WorldCup API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-worldcup-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+
+      - name: Probar API alternativa Mundial 2026
+        run: |
+          python test_worldcup_api.py
