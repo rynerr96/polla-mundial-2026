@@ -1093,6 +1093,8 @@ def admin_page():
         st.info("Ingresa el código de administrador para editar resultados.")
         return
 
+    backup_and_migration_section()
+
     fixture = load_fixture()
     results = get_results().rename(
         columns={"match_id": "partido", "goals_a": "Gol real equipo 1", "goals_b": "Gol real equipo 2"}
