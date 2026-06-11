@@ -2,10 +2,9 @@ import requests
 
 
 URLS_TO_TEST = [
-    "https://fifa.balldontlie.io/api/v1/matches",
-    "https://fifa.balldontlie.io/api/v1/matches?year=2026",
-    "https://fifa.balldontlie.io/api/v1/games?year=2026",
-    "https://fifa.balldontlie.io/api/v1/fixtures?year=2026",
+    "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json",
+    "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.teams.json",
+    "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.groups.json",
 ]
 
 
@@ -19,8 +18,8 @@ for url in URLS_TO_TEST:
         print("CONTENT TYPE:", response.headers.get("content-type"))
 
         text = response.text
-        print("RESPUESTA PRIMEROS 1500 CARACTERES:")
-        print(text[:1500])
+        print("RESPUESTA PRIMEROS 2000 CARACTERES:")
+        print(text[:2000])
 
     except Exception as e:
         print("ERROR:", repr(e))
