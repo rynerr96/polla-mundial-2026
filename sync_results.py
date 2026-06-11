@@ -1,5 +1,8 @@
 import os
+import re
+import html
 import requests
+import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from supabase import create_client
@@ -9,48 +12,165 @@ PERU_TZ = ZoneInfo("America/Lima")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-API_FOOTBALL_KEY = os.environ["API_FOOTBALL_KEY"]
 
-API_BASE_URL = "https://v3.football.api-sports.io"
+ELNINE_BASE_URL = "https://api.elnine.com.ar/schedule"
 
 
-# OJO:
-# Esta lista la vamos a completar bien después, cuando confirmemos los fixture_id reales de API-Football.
-# Por ahora dejamos una lista vacía para probar conexión sin modificar resultados.
-MATCH_MAP = {
-    # Ejemplo futuro:
-    # 1: 123456,
-    # 2: 123457,
+TEAM_ALIASES = {
+    "mexico": "mexico",
+    "méxico": "mexico",
+
+    "sudafrica": "sudafrica",
+    "sudáfrica": "sudafrica",
+    "south africa": "sudafrica",
+
+    "republica de corea": "corea del sur",
+    "república de corea": "corea del sur",
+    "corea del sur": "corea del sur",
+    "south korea": "corea del sur",
+
+    "republica checa": "republica checa",
+    "república checa": "republica checa",
+    "czech republic": "republica checa",
+    "czechia": "republica checa",
+
+    "canada": "canada",
+    "canadá": "canada",
+
+    "bosnia": "bosnia y herzegovina",
+    "bosnia & herzergovina": "bosnia y herzegovina",
+    "bosnia & herzegovina": "bosnia y herzegovina",
+    "bosnia y herzegovina": "bosnia y herzegovina",
+
+    "catar": "qatar",
+    "qatar": "qatar",
+
+    "suiza": "suiza",
+    "switzerland": "suiza",
+
+    "estados unidos": "estados unidos",
+    "usa": "estados unidos",
+    "united states": "estados unidos",
+
+    "turquia": "turquia",
+    "turquía": "turquia",
+    "turkey": "turquia",
+
+    "paises bajos": "paises bajos",
+    "países bajos": "paises bajos",
+    "netherlands": "paises bajos",
+
+    "curazao": "curazao",
+    "curaçao": "curazao",
+
+    "costa de marfil": "costa de marfil",
+    "ivory coast": "costa de marfil",
+
+    "cabo verde": "cabo verde",
+    "cape verde": "cabo verde",
+
+    "arabia saudita": "arabia saudita",
+    "saudi arabia": "arabia saudita",
+
+    "nueva zelanda": "nueva zelanda",
+    "new zealand": "nueva zelanda",
+
+    "inglaterra": "inglaterra",
+    "england": "inglaterra",
+
+    "escocia": "escocia",
+    "scotland": "escocia",
+
+    "alemania": "alemania",
+    "germany": "alemania",
+
+    "espana": "espana",
+    "españa": "espana",
+    "spain": "espana",
+
+    "marruecos": "marruecos",
+    "morocco": "marruecos",
+
+    "haiti": "haiti",
+    "haití": "haiti",
+
+    "japon": "japon",
+    "japón": "japon",
+    "japan": "japon",
+
+    "belgica": "belgica",
+    "bélgica": "belgica",
+    "belgium": "belgica",
+
+    "egipto": "egipto",
+    "egypt": "egipto",
+
+    "irak": "irak",
+    "iraq": "irak",
+
+    "polonia": "polonia",
+    "poland": "polonia",
 }
+
+
+def normalize_team(name: str) -> str:
+    if name is None:
+        return ""
+
+    value = str(name).strip().lower()
+
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ñ": "n",
+        "ç": "c",
+    }
+
+    for old, new in replacements.items():
+        value = value.replace(old, new)
+
+    value = re.sub(r"[^a-z0-9 ]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+
+    return TEAM_ALIASES.get(value, value)
 
 
 def get_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def get_api_fixture(api_fixture_id: int):
-    headers = {
-        "x-apisports-key": API_FOOTBALL_KEY
-    }
+def read_fixture():
+    df = pd.read_csv("fixture.csv")
+    df["partido"] = df["partido"].astype(int)
+    df["fecha"] = df["fecha"].astype(str)
+    return df
 
-    params = {
-        "id": api_fixture_id
-    }
 
+def get_existing_results():
+    supabase = get_supabase()
+    data = supabase.table("results").select("match_id").execute().data or []
+    return {int(item["match_id"]) for item in data}
+
+
+def fetch_schedule(date_value: str):
     response = requests.get(
-        f"{API_BASE_URL}/fixtures",
-        headers=headers,
-        params=params,
-        timeout=30
+        ELNINE_BASE_URL,
+        params={"date": date_value},
+        headers={
+            "accept": "application/json",
+            "user-agent": "Mozilla/5.0"
+        },
+        timeout=30,
     )
 
     response.raise_for_status()
-    data = response.json()
-
-    return data.get("response", [])
+    return response.json()
 
 
-def save_result_to_supabase(match_id: int, goals_a: int, goals_b: int):
+def save_result(match_id: int, goals_a: int, goals_b: int):
     supabase = get_supabase()
     now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
 
@@ -67,39 +187,90 @@ def save_result_to_supabase(match_id: int, goals_a: int, goals_b: int):
     ).execute()
 
 
-def sync_results():
-    if not MATCH_MAP:
-        print("MATCH_MAP está vacío. Conexión lista, pero todavía no hay partidos enlazados.")
-        return
+def find_api_match(row, api_matches):
+    team_a = normalize_team(row["equipo_1"])
+    team_b = normalize_team(row["equipo_2"])
 
-    updated = 0
-
-    for match_id, api_fixture_id in MATCH_MAP.items():
-        fixtures = get_api_fixture(api_fixture_id)
-
-        if not fixtures:
-            print(f"No se encontró fixture API para partido interno {match_id}.")
+    for item in api_matches:
+        if item.get("tournamentCalendarSlug") != "fifa-world-cup":
             continue
 
-        item = fixtures[0]
+        home = normalize_team(item.get("homeTeam", {}).get("name"))
+        away = normalize_team(item.get("awayTeam", {}).get("name"))
 
-        status_short = item["fixture"]["status"]["short"]
-        home_goals = item["goals"]["home"]
-        away_goals = item["goals"]["away"]
+        same_order = home == team_a and away == team_b
+        reverse_order = home == team_b and away == team_a
 
-        print(
-            f"Partido interno {match_id} / API {api_fixture_id} "
-            f"estado={status_short} marcador={home_goals}-{away_goals}"
-        )
+        if same_order or reverse_order:
+            return item, reverse_order
 
-        # FT = Full Time / partido finalizado
-        # AET = After Extra Time
-        # PEN = Penalties
-        if status_short in ["FT", "AET", "PEN"] and home_goals is not None and away_goals is not None:
-            save_result_to_supabase(match_id, home_goals, away_goals)
-            updated += 1
+    return None, False
 
-    print(f"Sincronización terminada. Resultados actualizados: {updated}")
+
+def sync_results():
+    fixture = read_fixture()
+    existing_results = get_existing_results()
+
+    dates = sorted(fixture["fecha"].dropna().unique().tolist())
+
+    updated = 0
+    checked = 0
+
+    for date_value in dates:
+        try:
+            schedule = fetch_schedule(date_value)
+        except Exception as e:
+            print(f"Error consultando fecha {date_value}: {repr(e)}")
+            continue
+
+        api_matches = schedule.get("matches", [])
+
+        day_fixture = fixture[fixture["fecha"] == date_value]
+
+        for _, row in day_fixture.iterrows():
+            match_id = int(row["partido"])
+
+            if match_id in existing_results:
+                continue
+
+            api_match, reverse_order = find_api_match(row, api_matches)
+            checked += 1
+
+            if not api_match:
+                print(
+                    f"No se encontró partido API para N° {match_id}: "
+                    f"{row['equipo_1']} vs {row['equipo_2']} / fecha {date_value}"
+                )
+                continue
+
+            status = api_match.get("status")
+            period = api_match.get("period")
+            home_score = api_match.get("homeScore")
+            away_score = api_match.get("awayScore")
+
+            print(
+                f"N° {match_id}: {row['equipo_1']} vs {row['equipo_2']} | "
+                f"API status={status}, period={period}, marcador={home_score}-{away_score}"
+            )
+
+            if status == "finished" and period in ["FT", "AET", "PEN"]:
+                if home_score is None or away_score is None:
+                    continue
+
+                if reverse_order:
+                    goals_a = away_score
+                    goals_b = home_score
+                else:
+                    goals_a = home_score
+                    goals_b = away_score
+
+                save_result(match_id, goals_a, goals_b)
+                updated += 1
+                existing_results.add(match_id)
+
+                print(f"Resultado guardado: partido {match_id} = {goals_a}-{goals_b}")
+
+    print(f"Sincronización terminada. Revisados: {checked}. Actualizados: {updated}.")
 
 
 if __name__ == "__main__":
