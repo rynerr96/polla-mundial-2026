@@ -40,86 +40,205 @@ CUSTOM_CSS = """
     --gold-main: #facc15;
     --red-main: #dc2626;
     --card-border: #dbeafe;
+    --soft-bg: #f8fafc;
+}
+
+html, body, [class*="css"] {
+    scroll-behavior: smooth;
 }
 
 .main .block-container {
-    padding-top: 1.2rem;
+    padding-top: 1.1rem;
     padding-bottom: 2rem;
-    max-width: 1350px;
+    max-width: 1420px;
 }
 
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #071638 0%, #0b2d6b 60%, #0f766e 100%);
+    background:
+        radial-gradient(circle at top left, rgba(250, 204, 21, .15), transparent 26%),
+        linear-gradient(180deg, #071638 0%, #0b2d6b 58%, #0f766e 100%);
+    border-right: 1px solid rgba(255,255,255,.08);
 }
 
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-.hero {
-    padding: 2rem 2rem;
-    border-radius: 28px;
-    background:
-        radial-gradient(circle at top right, rgba(250, 204, 21, .35), transparent 28%),
-        radial-gradient(circle at bottom left, rgba(34, 197, 94, .35), transparent 24%),
-        linear-gradient(135deg, #071638 0%, #0b2d6b 45%, #006847 100%);
+[data-testid="stSidebar"] [role="radiogroup"] label {
+    padding: .45rem .5rem;
+    border-radius: 14px;
+    margin-bottom: .25rem;
+    transition: all .18s ease;
+}
+
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+    background: rgba(255,255,255,.12);
+    transform: translateX(2px);
+}
+
+.sidebar-title {
+    font-size: 1.15rem;
+    font-weight: 900;
+    margin-bottom: .2rem;
     color: white;
-    box-shadow: 0 20px 45px rgba(7, 22, 56, 0.26);
+}
+
+.sidebar-subtitle {
+    color: rgba(255,255,255,.72);
+    font-size: .82rem;
+    line-height: 1.35;
+    margin-bottom: 1rem;
+}
+
+.hero {
+    padding: 2.1rem 2rem;
+    border-radius: 30px;
+    background:
+        radial-gradient(circle at top right, rgba(250, 204, 21, .34), transparent 27%),
+        radial-gradient(circle at bottom left, rgba(34, 197, 94, .32), transparent 24%),
+        linear-gradient(135deg, #071638 0%, #0b2d6b 42%, #006847 100%);
+    color: white;
+    box-shadow: 0 22px 52px rgba(7, 22, 56, 0.24);
     margin-bottom: 1.1rem;
     border: 1px solid rgba(255,255,255,.18);
+    position: relative;
+    overflow: hidden;
+}
+
+.hero:after {
+    content: "⚽";
+    position: absolute;
+    right: 3rem;
+    bottom: -2.2rem;
+    font-size: 8rem;
+    opacity: .12;
+    transform: rotate(-18deg);
 }
 
 .hero h1 {
     margin: 0;
-    font-size: 2.55rem;
-    letter-spacing: -0.05em;
-    font-weight: 900;
+    font-size: 2.7rem;
+    letter-spacing: -0.055em;
+    font-weight: 950;
+    line-height: 1.05;
 }
 
 .hero p {
-    margin-top: 0.65rem;
+    margin-top: 0.85rem;
     color: #e0f2fe;
     font-size: 1.05rem;
     max-width: 900px;
+    line-height: 1.65;
 }
 
 .hero-badge {
     display: inline-block;
-    background: rgba(250, 204, 21, .95);
+    background: rgba(250, 204, 21, .98);
     color: #111827;
-    padding: .3rem .75rem;
+    padding: .35rem .8rem;
     border-radius: 999px;
-    font-weight: 800;
+    font-weight: 900;
     font-size: .78rem;
-    margin-bottom: .8rem;
-    letter-spacing: .03em;
+    margin-bottom: .9rem;
+    letter-spacing: .04em;
 }
 
 .stat-card {
-    padding: 1rem;
-    border-radius: 20px;
+    padding: 1.05rem;
+    border-radius: 22px;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
     border: 1px solid #dbeafe;
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.075);
+    transition: all .2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 34px rgba(15, 23, 42, 0.11);
 }
 
 .stat-card .label {
     color: #64748b;
-    font-size: 0.84rem;
-    font-weight: 700;
+    font-size: 0.83rem;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: .03em;
+    letter-spacing: .04em;
 }
 
 .stat-card .value {
     color: #071638;
-    font-size: 1.75rem;
-    font-weight: 900;
+    font-size: 1.85rem;
+    font-weight: 950;
 }
 
 .small-note {
     color: #64748b;
     font-size: 0.92rem;
+}
+
+.carousel-wrap {
+    margin: .4rem 0 1.2rem 0;
+}
+
+.carousel-title {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    color: #0f172a;
+    font-size: 1.25rem;
+    font-weight: 900;
+    margin-bottom: .7rem;
+}
+
+.carousel {
+    display: flex;
+    gap: .85rem;
+    overflow-x: auto;
+    padding: .2rem .1rem 1rem .1rem;
+    scroll-snap-type: x mandatory;
+}
+
+.carousel::-webkit-scrollbar {
+    height: 8px;
+}
+
+.carousel::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+}
+
+.feature-card {
+    min-width: 310px;
+    scroll-snap-align: start;
+    border-radius: 22px;
+    padding: 1rem;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,1) 100%);
+    border: 1px solid #dbeafe;
+    box-shadow: 0 10px 24px rgba(15,23,42,.075);
+}
+
+.feature-card .phase {
+    color: #64748b;
+    font-size: .8rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.feature-card .teams {
+    margin-top: .55rem;
+    color: #0f172a;
+    font-weight: 950;
+    font-size: 1.02rem;
+    line-height: 1.45;
+}
+
+.feature-card .meta {
+    margin-top: .55rem;
+    color: #475569;
+    font-size: .86rem;
+    line-height: 1.45;
 }
 
 .match-card {
@@ -130,6 +249,12 @@ CUSTOM_CSS = """
     border: 1px solid #dbeafe;
     box-shadow: 0 8px 24px rgba(15, 23, 42, .07);
     margin-bottom: .8rem;
+    transition: all .18s ease;
+}
+
+.match-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, .10);
 }
 
 .match-meta {
@@ -173,9 +298,50 @@ CUSTOM_CSS = """
     border: 1px solid #fde68a;
 }
 
-.admin-link-note {
+.footer-note {
     color: #64748b;
-    font-size: .85rem;
+    font-size: .82rem;
+    line-height: 1.45;
+    margin-top: 1.2rem;
+}
+
+@media (max-width: 768px) {
+    .main .block-container {
+        padding-left: .75rem;
+        padding-right: .75rem;
+        padding-top: .75rem;
+    }
+
+    .hero {
+        padding: 1.45rem 1.1rem;
+        border-radius: 22px;
+    }
+
+    .hero h1 {
+        font-size: 2rem;
+    }
+
+    .hero p {
+        font-size: .95rem;
+    }
+
+    .hero:after {
+        font-size: 5rem;
+        right: 1rem;
+        bottom: -1.4rem;
+    }
+
+    .feature-card {
+        min-width: 260px;
+    }
+
+    .stat-card {
+        margin-bottom: .55rem;
+    }
+
+    .team-name {
+        font-size: .95rem;
+    }
 }
 </style>
 """
@@ -706,7 +872,37 @@ def hero():
         <div class="hero">
             <div class="hero-badge">MUNDIAL FIFA 2026 · PRONÓSTICOS</div>
             <h1>⚽ Polla Mundialista 2026</h1>
-            <p>Registra tus marcadores, sigue la tabla de posiciones y compite partido a partido en una app sencilla, visual y pensada para compartir por link.</p>
+            <p>Registra tus marcadores, revisa la tabla de posiciones y compite partido a partido en una experiencia rápida, clara y pensada para usar desde el celular.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+
+def featured_matches_carousel():
+    fixture = load_fixture().head(8).copy()
+
+    cards = []
+    for _, row in fixture.iterrows():
+        cards.append(
+            f"""
+            <div class="feature-card">
+                <div class="phase">Partido N° {int(row['partido'])} · {html.escape(str(row['fase']))}</div>
+                <div class="teams">{team_label(row['equipo_1'])}<br><span style="color:#64748b;font-weight:800;">vs</span><br>{team_label(row['equipo_2'])}</div>
+                <div class="meta">📅 {html.escape(str(row['fecha']))} · {html.escape(str(row['hora_peru']))}<br>🏟️ {html.escape(str(row['sede']))}</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <div class="carousel-wrap">
+            <div class="carousel-title">🌎 Partidos destacados</div>
+            <div class="carousel">
+                {''.join(cards)}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1111,6 +1307,7 @@ def fixture_page():
 
 def main():
     hero()
+    featured_matches_carousel()
     stat_cards()
 
     admin_mode = st.query_params.get("admin", "") == "1"
@@ -1128,11 +1325,23 @@ def main():
     if "menu" not in st.session_state or st.session_state["menu"] not in menu_items:
         st.session_state["menu"] = "Participante"
 
+    st.sidebar.markdown('<div class="sidebar-title">🏆 Polla Mundial</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="sidebar-subtitle">Pronósticos, ranking y fixture del Mundial 2026.</div>', unsafe_allow_html=True)
+
+    menu_labels = {
+        "Participante": "👤 Participante",
+        "Mis pronósticos": "📝 Mis pronósticos",
+        "Ranking": "🏆 Ranking",
+        "Fixture": "📅 Fixture",
+        "Administrador": "🔐 Administrador",
+    }
+
     menu = st.sidebar.radio(
         "Menú",
         menu_items,
         index=menu_items.index(st.session_state["menu"]),
-        key="menu"
+        key="menu",
+        format_func=lambda x: menu_labels.get(x, x)
     )
 
     if menu == "Participante":
@@ -1148,10 +1357,9 @@ def main():
 
     st.sidebar.divider()
     st.sidebar.caption("Concurso recreativo de pronósticos. No administra pagos ni apuestas.")
-    if not admin_mode:
-        st.sidebar.caption("Panel de administración oculto.")
 
 
 if __name__ == "__main__":
     main()
+
 
