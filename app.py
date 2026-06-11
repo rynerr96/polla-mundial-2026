@@ -2,10 +2,8 @@ import os
 import sqlite3
 import hashlib
 import html
-import re
 from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -21,8 +19,6 @@ PUNTOS_GOLES_UN_EQUIPO = 2
 PUNTOS_DIFERENCIA_GOLES = 3
 
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin2026")
-
-PERU_TZ = ZoneInfo("America/Lima")
 
 
 st.set_page_config(
@@ -328,77 +324,6 @@ def team_flag(team: str) -> str:
     return flag_img(team)
 
 
-def parse_match_start(row):
-    """
-    Convierte la fecha y hora del fixture a datetime con zona horaria de Perú.
-    Funciona con formatos como:
-    - 11/06/2026 + 14:00
-    - 2026-06-11 + 14:00
-    - 11-06-2026 + 14:00
-    Si no puede interpretar la fecha/hora, devuelve None.
-    """
-    fecha = str(row.get("fecha", row.get("Fecha", ""))).strip()
-    hora = str(row.get("hora_peru", row.get("Hora Perú", ""))).strip()
-
-    if not fecha or fecha.lower() in ["nan", "none"]:
-        return None
-
-    # Extrae una hora tipo 14:00 aunque venga con texto adicional.
-    hora_match = re.search(r"(\d{1,2}):(\d{2})", hora)
-    hora_limpia = hora_match.group(0) if hora_match else "00:00"
-
-    fecha_hora = f"{fecha} {hora_limpia}"
-
-    formatos = [
-        "%d/%m/%Y %H:%M",
-        "%Y-%m-%d %H:%M",
-        "%d-%m-%Y %H:%M",
-        "%d/%m/%y %H:%M",
-    ]
-
-    for fmt in formatos:
-        try:
-            dt = datetime.strptime(fecha_hora, fmt)
-            return dt.replace(tzinfo=PERU_TZ)
-        except ValueError:
-            pass
-
-    # Último intento usando pandas, por si la fecha viene en otro formato.
-    try:
-        dt = pd.to_datetime(fecha_hora, dayfirst=True, errors="coerce")
-        if pd.isna(dt):
-            return None
-        return dt.to_pydatetime().replace(tzinfo=PERU_TZ)
-    except Exception:
-        return None
-
-
-def match_has_started(row, now=None) -> bool:
-    """
-    Devuelve True si el partido ya empezó según fecha y hora Perú.
-    """
-    start = parse_match_start(row)
-
-    if start is None:
-        # Si no se puede leer la fecha, no bloqueamos para evitar errores.
-        return False
-
-    now = now or datetime.now(PERU_TZ)
-    return now >= start
-
-
-def match_status_text(row) -> str:
-    start = parse_match_start(row)
-
-    if start is None:
-        return "Horario no reconocido"
-
-    if match_has_started(row):
-        return "🔒 Pronóstico cerrado"
-
-    return "🟢 Pronóstico abierto"
-
-
 def get_participant(name: str):
     conn = get_conn()
     row = conn.execute(
@@ -496,25 +421,10 @@ def get_predictions(participant_id: int):
 def save_predictions(participant_id: int, edited: pd.DataFrame):
     conn = get_conn()
     cur = conn.cursor()
-    now = datetime.now(PERU_TZ).isoformat(timespec="seconds")
-
-    fixture = load_fixture()
-    fixture_by_match = {
-        int(row["partido"]): row
-        for _, row in fixture.iterrows()
-    }
-
-    saved_count = 0
-    blocked_count = 0
+    now = datetime.now().isoformat(timespec="seconds")
 
     for _, row in edited.iterrows():
         match_id = int(row["partido"])
-
-        fixture_row = fixture_by_match.get(match_id)
-        if fixture_row is not None and match_has_started(fixture_row):
-            blocked_count += 1
-            continue
-
         ga = row.get("Tu gol equipo 1")
         gb = row.get("Tu gol equipo 2")
 
@@ -533,12 +443,9 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
             """,
             (participant_id, match_id, ga, gb, now),
         )
-        saved_count += 1
 
     conn.commit()
     conn.close()
-
-    return saved_count, blocked_count
 
 
 def get_results():
@@ -710,7 +617,7 @@ def forecasts_page():
         return
 
     st.subheader(f"📝 Mis pronósticos: {st.session_state['participant_name']}")
-    st.caption("Coloca solo los goles. Cada pronóstico se cierra automáticamente cuando inicia el partido.")
+    st.caption("Coloca solo los goles. El sistema calcula automáticamente ganador y perdedor antes de guardar.")
 
     fixture = load_fixture()
     predictions = get_predictions(st.session_state["participant_id"]).rename(
@@ -746,8 +653,6 @@ def forecasts_page():
 
         default_a = None if pd.isna(row.get("pred_a")) else int(row.get("pred_a"))
         default_b = None if pd.isna(row.get("pred_b")) else int(row.get("pred_b"))
-        started = match_has_started(row)
-        status_text = match_status_text(row)
 
         st.markdown('<div class="match-card">', unsafe_allow_html=True)
 
@@ -755,10 +660,6 @@ def forecasts_page():
         with top1:
             st.markdown(f"**N° {match_id}**")
             st.markdown(f"<div class='match-meta'>{row['fecha']} · {row['hora_peru']}</div>", unsafe_allow_html=True)
-            if started:
-                st.markdown("<span class='loser-tag'>🔒 Cerrado</span>", unsafe_allow_html=True)
-            else:
-                st.markdown("<span class='winner-tag'>🟢 Abierto</span>", unsafe_allow_html=True)
         with top2:
             st.markdown(f"**{row['fase']}**")
             st.markdown(f"<div class='match-meta'>{row['grupo']} · {row['sede']}</div>", unsafe_allow_html=True)
@@ -777,7 +678,6 @@ def forecasts_page():
                 placeholder="",
                 label_visibility="collapsed",
                 key=f"pred_a_{match_id}",
-                disabled=started,
             )
         with c3:
             st.markdown("<h3 style='text-align:center;margin-top:0.05rem;'>-</h3>", unsafe_allow_html=True)
@@ -791,7 +691,6 @@ def forecasts_page():
                 placeholder="",
                 label_visibility="collapsed",
                 key=f"pred_b_{match_id}",
-                disabled=started,
             )
         with c5:
             st.markdown(f"<div class='team-name'>{team_label(team_b)}</div>", unsafe_allow_html=True)
@@ -827,16 +726,8 @@ def forecasts_page():
     st.divider()
 
     if st.button("💾 Guardar mis pronósticos", type="primary"):
-        saved_count, blocked_count = save_predictions(st.session_state["participant_id"], edited)
-
-        if saved_count > 0:
-            st.success(f"Pronósticos guardados correctamente: {saved_count} partido(s).")
-        else:
-            st.info("No se guardaron nuevos pronósticos.")
-
-        if blocked_count > 0:
-            st.warning(f"{blocked_count} partido(s) ya estaban cerrados y no fueron modificados.")
-
+        save_predictions(st.session_state["participant_id"], edited)
+        st.success("Pronósticos guardados correctamente.")
         st.rerun()
 
 def admin_page():
