@@ -211,6 +211,28 @@ html, body, [class*="css"] {
     font-weight: 900;
     color: #0f172a;
 }
+@media (prefers-color-scheme: dark) {
+    .team-name {
+        color: #ffffff !important;
+    }
+
+    .match-meta {
+        color: #cbd5e1 !important;
+    }
+
+    .small-note {
+        color: #cbd5e1 !important;
+    }
+
+    .match-card {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+    }
+
+    .stNumberInput input {
+        color: #ffffff !important;
+    }
+}
 
 .winner-tag {
     display: inline-block;
