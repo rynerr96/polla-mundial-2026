@@ -912,6 +912,35 @@ def forecasts_page():
         unsafe_allow_html=True,
     )
 
+    def guardar_pronosticos_actuales():
+        temp_rows = []
+
+        for _, r in data.iterrows():
+            mid = int(r["partido"])
+            temp_rows.append({
+                "partido": mid,
+                "Tu gol equipo 1": st.session_state.get(f"pred_a_{mid}"),
+                "Tu gol equipo 2": st.session_state.get(f"pred_b_{mid}"),
+            })
+
+        temp_df = pd.DataFrame(temp_rows)
+        saved_count, blocked_count = save_predictions(st.session_state["participant_id"], temp_df)
+
+        if saved_count > 0:
+            st.success(f"Pronósticos guardados correctamente: {saved_count} partido(s).")
+        else:
+            st.info("No se guardaron nuevos pronósticos.")
+
+        if blocked_count > 0:
+            st.warning(f"{blocked_count} partido(s) ya estaban cerrados y no fueron modificados.")
+
+        st.rerun()
+
+    st.info("💡 Puedes guardar tus pronósticos desde este botón sin bajar hasta el final.")
+
+    if st.button("💾 Guardar pronósticos ahora", type="primary", key="save_predictions_top"):
+        guardar_pronosticos_actuales()
+
     edited_rows = []
 
     for _, row in data.iterrows():
@@ -1001,18 +1030,8 @@ def forecasts_page():
 
     st.divider()
 
-    if st.button("💾 Guardar mis pronósticos", type="primary"):
-        saved_count, blocked_count = save_predictions(st.session_state["participant_id"], edited)
-
-        if saved_count > 0:
-            st.success(f"Pronósticos guardados correctamente: {saved_count} partido(s).")
-        else:
-            st.info("No se guardaron nuevos pronósticos.")
-
-        if blocked_count > 0:
-            st.warning(f"{blocked_count} partido(s) ya estaban cerrados y no fueron modificados.")
-
-        st.rerun()
+    if st.button("💾 Guardar mis pronósticos", type="primary", key="save_predictions_bottom"):
+        guardar_pronosticos_actuales()
 
 
 def admin_page():
@@ -1276,6 +1295,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
