@@ -31,7 +31,7 @@ st.set_page_config(
 )
 
 
-CUSTOM_CSS = ""
+CUSTOM_CSS = " "
 }
 <style>
 :root {
