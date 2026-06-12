@@ -912,10 +912,15 @@ def forecasts_page():
         unsafe_allow_html=True,
     )
 
-    def guardar_pronosticos_actuales():
+    def guardar_pronosticos_actuales(match_ids=None):
         temp_rows = []
 
-        for _, r in data.iterrows():
+        if match_ids is None:
+            rows_source = data
+        else:
+            rows_source = data[data["partido"].astype(int).isin([int(x) for x in match_ids])]
+
+        for _, r in rows_source.iterrows():
             mid = int(r["partido"])
             temp_rows.append({
                 "partido": mid,
@@ -936,14 +941,9 @@ def forecasts_page():
 
         st.rerun()
 
-    st.info("💡 Puedes guardar tus pronósticos desde este botón sin bajar hasta el final.")
-
-    if st.button("💾 Guardar pronósticos ahora", type="primary", key="save_predictions_top"):
-        guardar_pronosticos_actuales()
-
     edited_rows = []
 
-    for _, row in data.iterrows():
+    for row_pos, (_, row) in enumerate(data.iterrows()):
         match_id = int(row["partido"])
         team_a = row["equipo_1"]
         team_b = row["equipo_2"]
@@ -1026,11 +1026,38 @@ def forecasts_page():
             "Tu gol equipo 2": gb,
         })
 
+        current_date = str(row["fecha"])
+        is_last_match_of_day = (
+            row_pos == len(data) - 1
+            or str(data.iloc[row_pos + 1]["fecha"]) != current_date
+        )
+
+        if is_last_match_of_day:
+            day_match_ids = [
+                int(x) for x in data[data["fecha"].astype(str) == current_date]["partido"].tolist()
+            ]
+
+            st.markdown(
+                "<div style='margin: 0.8rem 0 1.5rem 0; padding: 0.8rem; "
+                "border-radius: 16px; background: #f8fafc; border: 1px solid #dbeafe;'>"
+                "<b>Fin de partidos de esta fecha.</b><br>"
+                "<span style='color:#64748b;font-size:0.9rem;'>Puedes guardar solo los pronósticos de este día.</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            if st.button(
+                f"💾 Guardar pronósticos del {current_date}",
+                type="primary",
+                key=f"save_predictions_day_{current_date}",
+            ):
+                guardar_pronosticos_actuales(day_match_ids)
+
     edited = pd.DataFrame(edited_rows)
 
     st.divider()
 
-    if st.button("💾 Guardar mis pronósticos", type="primary", key="save_predictions_bottom"):
+    if st.button("💾 Guardar todos mis pronósticos", type="primary", key="save_predictions_bottom"):
         guardar_pronosticos_actuales()
 
 
