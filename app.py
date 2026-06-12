@@ -288,45 +288,65 @@ html, body, [class*="css"] {
     }
 }
 
-/* Corrección de lectura según tema */
-@media (prefers-color-scheme: light) {
-    .team-name,
-    .team-name *,
-    .match-card,
-    .match-card * {
-        color: #0f172a !important;
-    }
-
-    .match-meta,
-    .small-note {
-        color: #64748b !important;
-    }
+/* Corrección de lectura según el tema real de Streamlit.
+   Usamos variables internas de Streamlit en lugar de prefers-color-scheme,
+   porque en celulares el navegador puede no reportar igual el tema de la app. */
+.match-card {
+    background: var(--secondary-background-color) !important;
+    border: 1px solid rgba(148, 163, 184, .35) !important;
+    color: var(--text-color) !important;
 }
 
-@media (prefers-color-scheme: dark) {
-    .team-name,
-    .team-name *,
-    .match-card,
-    .match-card * {
-        color: #ffffff !important;
-    }
-
-    .match-meta,
-    .small-note {
-        color: #cbd5e1 !important;
-    }
-
-    .match-card {
-        background: #111827 !important;
-        border: 1px solid #334155 !important;
-    }
+.team-name,
+.team-name *,
+.match-card strong,
+.match-card h3 {
+    color: var(--text-color) !important;
+    opacity: 1 !important;
 }
 
-.winner-tag,
+.match-meta,
+.small-note {
+    color: rgba(148, 163, 184, .95) !important;
+}
+
+.day-separator {
+    margin: 0.8rem 0 1.5rem 0;
+    padding: 0.8rem;
+    border-radius: 16px;
+    background: var(--secondary-background-color) !important;
+    border: 1px solid rgba(148, 163, 184, .35) !important;
+}
+
+.day-separator b {
+    color: var(--text-color) !important;
+}
+
+.day-separator span {
+    color: rgba(148, 163, 184, .95) !important;
+    font-size: 0.9rem;
+}
+
+.winner-tag {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+    border: 1px solid #bbf7d0 !important;
+}
+
+.loser-tag {
+    background: #fee2e2 !important;
+    color: #991b1b !important;
+    border: 1px solid #fecaca !important;
+}
+
+.draw-tag {
+    background: #fef9c3 !important;
+    color: #854d0e !important;
+    border: 1px solid #fde68a !important;
+}
+
 .winner-tag *,
-.loser-tag,
 .loser-tag *,
-.draw-tag,
 .draw-tag * {
     color: inherit !important;
 }
@@ -1082,10 +1102,9 @@ def forecasts_page():
             ]
 
             st.markdown(
-                "<div style='margin: 0.8rem 0 1.5rem 0; padding: 0.8rem; "
-                "border-radius: 16px; background: #f8fafc; border: 1px solid #dbeafe;'>"
-                "<b style='color:#0f172a;'>Fin de partidos de esta fecha.</b><br>"
-                "<span style='color:#64748b;font-size:0.9rem;'>Puedes guardar solo los pronósticos de este día.</span>"
+                "<div class='day-separator'>"
+                "<b>Fin de partidos de esta fecha.</b><br>"
+                "<span>Puedes guardar solo los pronósticos de este día.</span>"
                 "</div>",
                 unsafe_allow_html=True,
             )
