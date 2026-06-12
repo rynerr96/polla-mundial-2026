@@ -31,7 +31,15 @@ st.set_page_config(
 )
 
 
-CUSTOM_CSS = """
+CUSTOM_CSS = 
+.team-name,
+.team-name *,
+.match-card,
+.match-card *,
+.match-meta,
+.small-note {
+    color: #ffffff !important;
+}
 <style>
 :root {
     --blue-dark: #071638;
