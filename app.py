@@ -31,8 +31,7 @@ st.set_page_config(
 )
 
 
-CUSTOM_CSS = " "
-}
+CUSTOM_CSS = """
 <style>
 :root {
     --blue-dark: #071638;
@@ -212,28 +211,6 @@ html, body, [class*="css"] {
     font-weight: 900;
     color: #0f172a;
 }
-@media (prefers-color-scheme: dark) {
-    .team-name {
-        color: #ffffff !important;
-    }
-
-    .match-meta {
-        color: #cbd5e1 !important;
-    }
-
-    .small-note {
-        color: #cbd5e1 !important;
-    }
-
-    .match-card {
-        background: #111827 !important;
-        border: 1px solid #334155 !important;
-    }
-
-    .stNumberInput input {
-        color: #ffffff !important;
-    }
-}
 
 .winner-tag {
     display: inline-block;
@@ -310,6 +287,26 @@ html, body, [class*="css"] {
         font-size: .95rem;
     }
 }
+
+/* Corrección de lectura en modo oscuro */
+.team-name,
+.team-name *,
+.match-card,
+.match-card *,
+.match-meta,
+.small-note {
+    color: #ffffff !important;
+}
+
+.winner-tag,
+.winner-tag *,
+.loser-tag,
+.loser-tag *,
+.draw-tag,
+.draw-tag * {
+    color: inherit !important;
+}
+
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -1063,7 +1060,7 @@ def forecasts_page():
             st.markdown(
                 "<div style='margin: 0.8rem 0 1.5rem 0; padding: 0.8rem; "
                 "border-radius: 16px; background: #f8fafc; border: 1px solid #dbeafe;'>"
-                "<b>Fin de partidos de esta fecha.</b><br>"
+                "<b style='color:#0f172a;'>Fin de partidos de esta fecha.</b><br>"
                 "<span style='color:#64748b;font-size:0.9rem;'>Puedes guardar solo los pronósticos de este día.</span>"
                 "</div>",
                 unsafe_allow_html=True,
@@ -1345,5 +1342,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
