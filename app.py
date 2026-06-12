@@ -288,14 +288,38 @@ html, body, [class*="css"] {
     }
 }
 
-/* Corrección de lectura en modo oscuro */
-.team-name,
-.team-name *,
-.match-card,
-.match-card *,
-.match-meta,
-.small-note {
-    color: #ffffff !important;
+/* Corrección de lectura según tema */
+@media (prefers-color-scheme: light) {
+    .team-name,
+    .team-name *,
+    .match-card,
+    .match-card * {
+        color: #0f172a !important;
+    }
+
+    .match-meta,
+    .small-note {
+        color: #64748b !important;
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    .team-name,
+    .team-name *,
+    .match-card,
+    .match-card * {
+        color: #ffffff !important;
+    }
+
+    .match-meta,
+    .small-note {
+        color: #cbd5e1 !important;
+    }
+
+    .match-card {
+        background: #111827 !important;
+        border: 1px solid #334155 !important;
+    }
 }
 
 .winner-tag,
