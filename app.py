@@ -958,6 +958,36 @@ def forecasts_page():
     if "pred_b" not in data.columns:
         data["pred_b"] = None
 
+    data["fecha_dt"] = pd.to_datetime(data["fecha"], errors="coerce")
+
+    st.markdown("### Filtros rápidos")
+
+    f1, f2, f3 = st.columns([1.4, 1.3, 1.3])
+
+    with f1:
+        rango = st.radio(
+            "Mostrar",
+            ["Próximos 3 días", "Hoy", "Próximos 7 días", "Todos"],
+            horizontal=False,
+            key="forecast_range_filter",
+        )
+
+    with f2:
+        mostrar_cerrados = st.checkbox(
+            "Mostrar partidos cerrados",
+            value=False,
+            help="Por defecto se ocultan los partidos que ya iniciaron para reducir el scroll.",
+            key="show_closed_matches",
+        )
+
+    with f3:
+        agrupar_por_fecha = st.checkbox(
+            "Agrupar por día",
+            value=True,
+            help="Recomendado para celular.",
+            key="group_by_date_forecasts",
+        )
+
     fase_options = ["Todas"] + sorted(data["fase"].dropna().unique().tolist())
     fase = st.selectbox("Filtrar por fase", fase_options)
 
@@ -970,9 +1000,39 @@ def forecasts_page():
     if grupo != "Todos":
         data = data[data["grupo"] == grupo].copy()
 
+    now = datetime.now(PERU_TZ)
+    today = pd.Timestamp(now.date())
+
+    if rango != "Todos":
+        if rango == "Hoy":
+            start_date = today
+            end_date = today
+        elif rango == "Próximos 3 días":
+            start_date = today
+            end_date = today + pd.Timedelta(days=2)
+        else:
+            start_date = today
+            end_date = today + pd.Timedelta(days=6)
+
+        data = data[
+            (data["fecha_dt"].notna())
+            & (data["fecha_dt"] >= start_date)
+            & (data["fecha_dt"] <= end_date)
+        ].copy()
+
+    if not mostrar_cerrados and not data.empty:
+        data = data[~data.apply(match_has_started, axis=1)].copy()
+
+    data = data.sort_values(["fecha_dt", "partido"]).reset_index(drop=True)
+
+    visible_matches = len(data)
+    if visible_matches == 0:
+        st.info("No hay partidos para mostrar con los filtros actuales. Puedes activar 'Mostrar partidos cerrados' o cambiar el rango a 'Todos'.")
+        return
+
     st.markdown("### Marcadores")
     st.markdown(
-        "<p class='small-note'>Llena los goles de cada selección. La app muestra al instante el ganador y el perdedor.</p>",
+        f"<p class='small-note'>Mostrando <b>{visible_matches}</b> partido(s). Llena los goles de cada selección. La app muestra al instante el ganador y el perdedor.</p>",
         unsafe_allow_html=True,
     )
 
@@ -1005,9 +1065,7 @@ def forecasts_page():
 
         st.rerun()
 
-    edited_rows = []
-
-    for row_pos, (_, row) in enumerate(data.iterrows()):
+    def render_match_card(row):
         match_id = int(row["partido"])
         team_a = row["equipo_1"]
         team_b = row["equipo_2"]
@@ -1084,44 +1142,51 @@ def forecasts_page():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        edited_rows.append({
+        return {
             "partido": match_id,
             "Tu gol equipo 1": ga,
             "Tu gol equipo 2": gb,
-        })
+        }
 
-        current_date = str(row["fecha"])
-        is_last_match_of_day = (
-            row_pos == len(data) - 1
-            or str(data.iloc[row_pos + 1]["fecha"]) != current_date
-        )
+    edited_rows = []
 
-        if is_last_match_of_day:
-            day_match_ids = [
-                int(x) for x in data[data["fecha"].astype(str) == current_date]["partido"].tolist()
-            ]
+    if agrupar_por_fecha:
+        grouped = list(data.groupby("fecha", sort=False))
 
-            st.markdown(
-                "<div class='day-separator'>"
-                "<b>Fin de partidos de esta fecha.</b><br>"
-                "<span>Puedes guardar solo los pronósticos de este día.</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+        for idx, (fecha, day_data) in enumerate(grouped):
+            day_match_ids = [int(x) for x in day_data["partido"].tolist()]
+            day_label = f"📅 {fecha} · {len(day_data)} partido(s)"
+            expanded = idx == 0
 
-            if st.button(
-                f"💾 Guardar pronósticos del {current_date}",
-                type="primary",
-                key=f"save_predictions_day_{current_date}",
-            ):
-                guardar_pronosticos_actuales(day_match_ids)
+            with st.expander(day_label, expanded=expanded):
+                for _, row in day_data.iterrows():
+                    edited_rows.append(render_match_card(row))
+
+                st.markdown(
+                    "<div class='day-separator'>"
+                    "<b>Fin de partidos de esta fecha.</b><br>"
+                    "<span>Puedes guardar solo los pronósticos de este día.</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+                if st.button(
+                    f"💾 Guardar pronósticos del {fecha}",
+                    type="primary",
+                    key=f"save_predictions_day_{fecha}",
+                ):
+                    guardar_pronosticos_actuales(day_match_ids)
+    else:
+        for _, row in data.iterrows():
+            edited_rows.append(render_match_card(row))
 
     edited = pd.DataFrame(edited_rows)
 
     st.divider()
 
-    if st.button("💾 Guardar todos mis pronósticos", type="primary", key="save_predictions_bottom"):
+    if st.button("💾 Guardar todos mis pronósticos visibles", type="primary", key="save_predictions_bottom"):
         guardar_pronosticos_actuales()
+
 
 
 def admin_page():
