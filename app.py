@@ -382,34 +382,194 @@ def hash_code(code: str) -> str:
     return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
 
 
-# Reemplazos manuales para cruces de eliminación directa.
-# Cuando se conozcan más clasificados, agrega aquí el texto exacto del fixture.csv
-# y el nombre exacto de la selección como aparece en TEAM_CODE_MAP.
+
+# Resolución automática de cruces de eliminación directa.
+# Convierte textos del fixture como "1º Grupo E", "2º Grupo C" o
+# "3º Grupo A/B/C/D/F" en el nombre real de la selección, usando los
+# resultados cargados en la tabla "results" de Supabase.
 CLASIFICADOS_MANUALES = {
+    # Fallback manual por si todavía no están completos los resultados de grupos.
     "2º Grupo A": "Canadá",
     "2º Grupo B": "Sudáfrica",
 }
 
 
-def resolve_team_name(team: str) -> str:
-    team = str(team).strip()
+def normalize_text(value: str) -> str:
+    return str(value).strip().replace("°", "º")
+
+
+@st.cache_data
+def load_fixture_raw():
+    df = pd.read_csv(FIXTURE_PATH)
+    df["partido"] = df["partido"].astype(int)
+    df = df.fillna("")
+    return df
+
+
+def calculate_group_tables(fixture: pd.DataFrame, results: pd.DataFrame):
+    """Calcula tablas de los grupos A-L con los resultados reales cargados."""
+    group_matches = fixture[
+        fixture["fase"].astype(str).str.lower().str.contains("grupo", na=False)
+    ].copy()
+
+    if group_matches.empty:
+        return {}, []
+
+    teams = {}
+    for _, row in group_matches.iterrows():
+        group = normalize_text(row.get("grupo", ""))
+        if not group:
+            continue
+        teams.setdefault(group, {})
+        for col in ["equipo_1", "equipo_2"]:
+            team = normalize_text(row.get(col, ""))
+            if team:
+                teams[group].setdefault(team, {
+                    "Grupo": group,
+                    "Equipo": team,
+                    "PJ": 0,
+                    "PG": 0,
+                    "PE": 0,
+                    "PP": 0,
+                    "GF": 0,
+                    "GC": 0,
+                    "DG": 0,
+                    "Pts": 0,
+                })
+
+    if results is None or results.empty:
+        return {}, []
+
+    res = results.rename(columns={"match_id": "partido", "goals_a": "real_a", "goals_b": "real_b"})
+    merged = group_matches.merge(res[["partido", "real_a", "real_b"]], on="partido", how="left")
+
+    for _, row in merged.iterrows():
+        if pd.isna(row.get("real_a")) or pd.isna(row.get("real_b")):
+            continue
+
+        group = normalize_text(row.get("grupo", ""))
+        team_a = normalize_text(row.get("equipo_1", ""))
+        team_b = normalize_text(row.get("equipo_2", ""))
+        ga = int(row["real_a"])
+        gb = int(row["real_b"])
+
+        if group not in teams or team_a not in teams[group] or team_b not in teams[group]:
+            continue
+
+        a = teams[group][team_a]
+        b = teams[group][team_b]
+
+        a["PJ"] += 1; b["PJ"] += 1
+        a["GF"] += ga; a["GC"] += gb
+        b["GF"] += gb; b["GC"] += ga
+        a["DG"] = a["GF"] - a["GC"]
+        b["DG"] = b["GF"] - b["GC"]
+
+        if ga > gb:
+            a["PG"] += 1; b["PP"] += 1; a["Pts"] += 3
+        elif gb > ga:
+            b["PG"] += 1; a["PP"] += 1; b["Pts"] += 3
+        else:
+            a["PE"] += 1; b["PE"] += 1; a["Pts"] += 1; b["Pts"] += 1
+
+    group_positions = {}
+    third_places = []
+
+    for group, group_teams in teams.items():
+        table = sorted(
+            group_teams.values(),
+            key=lambda x: (x["Pts"], x["DG"], x["GF"], x["PG"], x["Equipo"]),
+            reverse=True,
+        )
+
+        # Solo se considera resuelto el grupo si sus 6 partidos tienen resultado.
+        group_done = sum(1 for t in table for _ in range(0))
+        played_matches = int(
+            merged[(merged["grupo"] == group) & merged["real_a"].notna() & merged["real_b"].notna()].shape[0]
+        )
+        if played_matches < 6:
+            continue
+
+        for idx, item in enumerate(table, start=1):
+            letter = group.replace("Grupo", "").strip()
+            group_positions[f"{idx}º Grupo {letter}"] = item["Equipo"]
+            if idx == 3:
+                third_places.append(item.copy())
+
+    third_places = sorted(
+        third_places,
+        key=lambda x: (x["Pts"], x["DG"], x["GF"], x["PG"], x["Equipo"]),
+        reverse=True,
+    )
+    return group_positions, third_places
+
+
+def build_third_place_assignments(fixture: pd.DataFrame, third_places: list[dict]) -> dict:
+    """
+    Asigna placeholders de mejores terceros en orden de fixture.
+    Ejemplo: "3º Grupo A/B/C/D/F" toma el mejor tercero disponible dentro de esos grupos.
+    """
+    assignments = {}
+    used_groups = set()
+
+    placeholders = []
+    for _, row in fixture.sort_values("partido").iterrows():
+        for col in ["equipo_1", "equipo_2"]:
+            value = normalize_text(row.get(col, ""))
+            if re.fullmatch(r"3º Grupo [A-L](?:/[A-L])+", value) and value not in placeholders:
+                placeholders.append(value)
+
+    for placeholder in placeholders:
+        allowed = placeholder.replace("3º Grupo", "").strip().split("/")
+        chosen = None
+        for item in third_places:
+            group_letter = item["Grupo"].replace("Grupo", "").strip()
+            if group_letter in allowed and group_letter not in used_groups:
+                chosen = item
+                break
+
+        if chosen:
+            assignments[placeholder] = chosen["Equipo"]
+            used_groups.add(chosen["Grupo"].replace("Grupo", "").strip())
+
+    return assignments
+
+
+def resolve_team_name(team: str, group_positions: dict | None = None, third_assignments: dict | None = None) -> str:
+    team = normalize_text(team)
+    group_positions = group_positions or {}
+    third_assignments = third_assignments or {}
+
+    if team in group_positions:
+        return group_positions[team]
+
+    if team in third_assignments:
+        return third_assignments[team]
+
     return CLASIFICADOS_MANUALES.get(team, team)
 
 
 def apply_resolved_teams(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+    df = df.copy().fillna("")
+
+    try:
+        results = get_results()
+        group_positions, third_places = calculate_group_tables(df, results)
+        third_assignments = build_third_place_assignments(df, third_places)
+    except Exception:
+        group_positions, third_assignments = {}, {}
+
     for col in ["equipo_1", "equipo_2"]:
         if col in df.columns:
-            df[col] = df[col].apply(resolve_team_name)
+            df[col] = df[col].apply(lambda x: resolve_team_name(x, group_positions, third_assignments))
+
     return df
 
 
-@st.cache_data
+@st.cache_data(ttl=30)
 def load_fixture():
-    df = pd.read_csv(FIXTURE_PATH)
-    df["partido"] = df["partido"].astype(int)
-    df = apply_resolved_teams(df)
-    return df
+    df = load_fixture_raw()
+    return apply_resolved_teams(df)
 
 
 TEAM_CODE_MAP = {
@@ -794,6 +954,7 @@ def save_results(edited: pd.DataFrame):
 
     if records:
         supabase.table("results").upsert(records, on_conflict="match_id").execute()
+        load_fixture.clear()
 
 
 def get_match_overrides():
