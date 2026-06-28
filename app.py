@@ -382,10 +382,33 @@ def hash_code(code: str) -> str:
     return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
 
 
+# Reemplazos manuales para cruces de eliminación directa.
+# Cuando se conozcan más clasificados, agrega aquí el texto exacto del fixture.csv
+# y el nombre exacto de la selección como aparece en TEAM_CODE_MAP.
+CLASIFICADOS_MANUALES = {
+    "2º Grupo A": "Canadá",
+    "2º Grupo B": "Sudáfrica",
+}
+
+
+def resolve_team_name(team: str) -> str:
+    team = str(team).strip()
+    return CLASIFICADOS_MANUALES.get(team, team)
+
+
+def apply_resolved_teams(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for col in ["equipo_1", "equipo_2"]:
+        if col in df.columns:
+            df[col] = df[col].apply(resolve_team_name)
+    return df
+
+
 @st.cache_data
 def load_fixture():
     df = pd.read_csv(FIXTURE_PATH)
     df["partido"] = df["partido"].astype(int)
+    df = apply_resolved_teams(df)
     return df
 
 
@@ -1450,3 +1473,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
