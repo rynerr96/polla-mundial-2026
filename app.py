@@ -416,10 +416,25 @@ KNOCKOUT_OVERRIDES = {
 }
 
 KNOCKOUT_PHASES = {"Dieciseisavos", "Octavos", "Cuartos", "Semifinales", "Tercer puesto", "Final"}
+# La opción extra "¿Quién clasifica?" se activa desde esta fecha.
+# Para el 2026-06-29 se mantiene la regla anterior porque los participantes no fueron avisados.
+QUALIFIED_OPTION_START_DATE = pd.Timestamp("2026-06-30")
 
 
 def is_knockout_phase(fase: str) -> bool:
     return normalize_text(fase) in KNOCKOUT_PHASES
+
+
+def qualified_option_enabled(row) -> bool:
+    """Activa el selector de clasificado solo desde la fecha definida."""
+    if not is_knockout_phase(row.get("fase", "")):
+        return False
+
+    fecha = pd.to_datetime(row.get("fecha"), errors="coerce")
+    if pd.isna(fecha):
+        return False
+
+    return fecha >= QUALIFIED_OPTION_START_DATE
 
 
 def apply_knockout_overrides(df: pd.DataFrame) -> pd.DataFrame:
@@ -1097,9 +1112,15 @@ def build_ranking():
         total = 0
 
         for _, row in p_preds.iterrows():
+            # Los puntos por clasificado solo se aplican desde el partido 77
+            # (fecha 2026-06-30), porque la opción se comunicará desde ese día.
+            match_id_for_points = int(row.get("match_id", 0))
+            pred_q = row.get("pred_qualified") if match_id_for_points >= 77 else None
+            real_q = row.get("real_qualified") if match_id_for_points >= 77 else None
+
             total += calculate_points(
                 row.get("pred_a"), row.get("pred_b"), row.get("real_a"), row.get("real_b"),
-                row.get("pred_qualified"), row.get("real_qualified")
+                pred_q, real_q
             )
 
         scores.append({
@@ -1372,7 +1393,7 @@ def forecasts_page():
             st.markdown(f"<div class='team-name'>{team_label(team_b)}</div>", unsafe_allow_html=True)
 
         qualified = None
-        if knockout:
+        if qualified_option_enabled(row):
             options = ["—", team_a, team_b]
             selected_index = options.index(default_qualified) if default_qualified in options else 0
             qualified = st.selectbox(
@@ -1404,7 +1425,7 @@ def forecasts_page():
             else:
                 st.markdown("Perdedor: —")
 
-        if knockout and qualified:
+        if qualified_option_enabled(row) and qualified:
             st.markdown(f"Clasifica / ganador final: <span class='winner-tag'>{team_label(qualified)}</span>", unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1722,5 +1743,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
