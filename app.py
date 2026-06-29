@@ -393,12 +393,23 @@ CLASIFICADOS_MANUALES = {
     "2º Grupo B": "Sudáfrica",
 }
 
+# Correcciones manuales por partido para los cruces ya confirmados.
+# Esto evita que una tabla de resultados incompleta o de prueba asigne mal los cruces.
+# Los nombres deben coincidir con TEAM_CODE_MAP para que salga la bandera.
+MATCH_OVERRIDES = {
+    # Cruces confirmados según los partidos visibles en Flashscore.
+    # Se fuerzan aquí para NO depender de cálculos incompletos de fase de grupos.
+    73: {"equipo_1": "Canadá", "equipo_2": "Sudáfrica"},
+    74: {"equipo_1": "Brasil", "equipo_2": "Japón", "hora_peru": "12:00 p.m."},
+    75: {"equipo_1": "Alemania", "equipo_2": "Paraguay", "hora_peru": "3:30 p.m."},
+    76: {"equipo_1": "Países Bajos", "equipo_2": "Marruecos", "hora_peru": "8:00 p.m."},
+}
+
 
 def normalize_text(value: str) -> str:
     return str(value).strip().replace("°", "º")
 
 
-@st.cache_data
 def load_fixture_raw():
     df = pd.read_csv(FIXTURE_PATH)
     df["partido"] = df["partido"].astype(int)
@@ -563,11 +574,21 @@ def apply_resolved_teams(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].apply(lambda x: resolve_team_name(x, group_positions, third_assignments))
 
+    # Prioridad final: cruces confirmados manualmente por número de partido.
+    # También permite corregir horario sin tocar fixture.csv.
+    if "partido" in df.columns:
+        for match_id, override in MATCH_OVERRIDES.items():
+            mask = df["partido"].astype(int) == int(match_id)
+            if mask.any():
+                for col, value in override.items():
+                    if col in df.columns:
+                        df.loc[mask, col] = value
+
     return df
 
 
-@st.cache_data(ttl=30)
 def load_fixture():
+    # Sin caché para que los cruces corregidos se vean apenas reinicies la app.
     df = load_fixture_raw()
     return apply_resolved_teams(df)
 
@@ -620,6 +641,7 @@ TEAM_CODE_MAP = {
     "Irán": "ir",
     "Uzbekistán": "uz",
     "Jordania": "jo",
+    "Suecia": "se",
 }
 
 
@@ -1634,3 +1656,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
