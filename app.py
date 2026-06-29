@@ -18,6 +18,7 @@ PUNTOS_MARCADOR_EXACTO = 10
 PUNTOS_RESULTADO_CORRECTO = 5
 PUNTOS_GOLES_UN_EQUIPO = 2
 PUNTOS_DIFERENCIA_GOLES = 3
+PUNTOS_CLASIFICADO_CORRECTO = 5
 
 ADMIN_CODE = os.getenv("ADMIN_CODE", "admin2026")
 PERU_TZ = ZoneInfo("America/Lima")
@@ -393,6 +394,43 @@ CLASIFICADOS_MANUALES = {
     "2º Grupo B": "Sudáfrica",
 }
 
+# Cruces oficiales/actualizados de dieciseisavos.
+# Se aplican en memoria para no obligarte a modificar fixture.csv.
+KNOCKOUT_OVERRIDES = {
+    73: {"fecha": "2026-06-28", "hora_peru": "2:00 p.m.", "equipo_1": "Canadá", "equipo_2": "Sudáfrica", "sede": "Los Angeles Stadium"},
+    74: {"fecha": "2026-06-29", "hora_peru": "12:00 p.m.", "equipo_1": "Brasil", "equipo_2": "Japón", "sede": "Boston Stadium"},
+    75: {"fecha": "2026-06-29", "hora_peru": "3:30 p.m.", "equipo_1": "Alemania", "equipo_2": "Paraguay", "sede": "Estadio Monterrey"},
+    76: {"fecha": "2026-06-29", "hora_peru": "8:00 p.m.", "equipo_1": "Países Bajos", "equipo_2": "Marruecos", "sede": "Houston Stadium"},
+    77: {"fecha": "2026-06-30", "hora_peru": "12:00 p.m.", "equipo_1": "Costa de Marfil", "equipo_2": "Noruega", "sede": "New York New Jersey Stadium"},
+    78: {"fecha": "2026-06-30", "hora_peru": "4:00 p.m.", "equipo_1": "Francia", "equipo_2": "Suecia", "sede": "Dallas Stadium"},
+    79: {"fecha": "2026-06-30", "hora_peru": "8:00 p.m.", "equipo_1": "México", "equipo_2": "Ecuador", "sede": "Estadio Azteca Mexico City"},
+    80: {"fecha": "2026-07-01", "hora_peru": "11:00 a.m.", "equipo_1": "Inglaterra", "equipo_2": "RD de Congo", "sede": "Atlanta Stadium"},
+    81: {"fecha": "2026-07-01", "hora_peru": "3:00 p.m.", "equipo_1": "Bélgica", "equipo_2": "Senegal", "sede": "San Francisco Bay Area Stadium"},
+    82: {"fecha": "2026-07-01", "hora_peru": "7:00 p.m.", "equipo_1": "Estados Unidos", "equipo_2": "Bosnia", "sede": "Seattle Stadium"},
+    83: {"fecha": "2026-07-02", "hora_peru": "2:00 p.m.", "equipo_1": "España", "equipo_2": "Austria", "sede": "Toronto Stadium"},
+    84: {"fecha": "2026-07-02", "hora_peru": "6:00 p.m.", "equipo_1": "Portugal", "equipo_2": "Croacia", "sede": "Los Angeles Stadium"},
+    85: {"fecha": "2026-07-02", "hora_peru": "10:00 p.m.", "equipo_1": "Suiza", "equipo_2": "Argelia", "sede": "BC Place Vancouver"},
+    86: {"fecha": "2026-07-03", "hora_peru": "1:00 p.m.", "equipo_1": "Australia", "equipo_2": "Egipto", "sede": "Miami Stadium"},
+    87: {"fecha": "2026-07-03", "hora_peru": "5:00 p.m.", "equipo_1": "Argentina", "equipo_2": "Cabo Verde", "sede": "Kansas City Stadium"},
+    88: {"fecha": "2026-07-03", "hora_peru": "8:30 p.m.", "equipo_1": "Colombia", "equipo_2": "Ghana", "sede": "Dallas Stadium"},
+}
+
+KNOCKOUT_PHASES = {"Dieciseisavos", "Octavos", "Cuartos", "Semifinales", "Tercer puesto", "Final"}
+
+
+def is_knockout_phase(fase: str) -> bool:
+    return normalize_text(fase) in KNOCKOUT_PHASES
+
+
+def apply_knockout_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for match_id, values in KNOCKOUT_OVERRIDES.items():
+        mask = df["partido"].astype(int) == int(match_id)
+        for col, value in values.items():
+            if col in df.columns:
+                df.loc[mask, col] = value
+    return df
+
 
 def normalize_text(value: str) -> str:
     return str(value).strip().replace("°", "º")
@@ -569,7 +607,9 @@ def apply_resolved_teams(df: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(ttl=30)
 def load_fixture():
     df = load_fixture_raw()
-    return apply_resolved_teams(df)
+    df = apply_resolved_teams(df)
+    df = apply_knockout_overrides(df)
+    return df
 
 
 TEAM_CODE_MAP = {
@@ -585,6 +625,7 @@ TEAM_CODE_MAP = {
     "Turquía": "tr",
     "Catar": "qa",
     "Suiza": "ch",
+    "Suecia": "se",
     "Brasil": "br",
     "Marruecos": "ma",
     "Haití": "ht",
@@ -609,6 +650,8 @@ TEAM_CODE_MAP = {
     "Egipto": "eg",
     "Uruguay": "uy",
     "Arabia Saudita": "sa",
+    "Arabia Saudí": "sa",
+    "RD de Congo": "cd",
     "Colombia": "co",
     "Ghana": "gh",
     "Ecuador": "ec",
@@ -866,7 +909,7 @@ def get_predictions(participant_id: int):
     supabase = get_supabase_client()
     data = (
         supabase.table("predictions")
-        .select("match_id, goals_a, goals_b")
+        .select("match_id, goals_a, goals_b, qualified_winner")
         .eq("participant_id", int(participant_id))
         .execute()
         .data
@@ -898,6 +941,8 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
 
         ga = row.get("Tu gol equipo 1")
         gb = row.get("Tu gol equipo 2")
+        qualified = row.get("Clasifica")
+        qualified = None if qualified is None or pd.isna(qualified) or str(qualified).strip() in ["", "—"] else str(qualified).strip()
 
         ga = None if pd.isna(ga) else int(ga)
         gb = None if pd.isna(gb) else int(gb)
@@ -910,6 +955,7 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
             "match_id": int(match_id),
             "goals_a": ga,
             "goals_b": gb,
+            "qualified_winner": qualified,
             "updated_at": now,
         })
 
@@ -925,7 +971,7 @@ def save_predictions(participant_id: int, edited: pd.DataFrame):
 def get_results():
     df = df_from_table("results")
     if df.empty:
-        return pd.DataFrame(columns=["match_id", "goals_a", "goals_b"])
+        return pd.DataFrame(columns=["match_id", "goals_a", "goals_b", "qualified_winner"])
     return df
 
 
@@ -938,6 +984,8 @@ def save_results(edited: pd.DataFrame):
         match_id = int(row["partido"])
         ga = row.get("Gol real equipo 1")
         gb = row.get("Gol real equipo 2")
+        qualified = row.get("Clasificado real")
+        qualified = None if qualified is None or pd.isna(qualified) or str(qualified).strip() in ["", "—"] else str(qualified).strip()
 
         ga = None if pd.isna(ga) else int(ga)
         gb = None if pd.isna(gb) else int(gb)
@@ -949,6 +997,7 @@ def save_results(edited: pd.DataFrame):
             "match_id": match_id,
             "goals_a": ga,
             "goals_b": gb,
+            "qualified_winner": qualified,
             "updated_at": now,
         })
 
@@ -984,39 +1033,46 @@ def set_match_override(match_id: int, status: str):
     get_match_override_map.clear()
 
 
-def calculate_points(pred_a, pred_b, real_a, real_b):
+def calculate_points(pred_a, pred_b, real_a, real_b, pred_qualified=None, real_qualified=None):
     if pd.isna(pred_a) or pd.isna(pred_b) or pd.isna(real_a) or pd.isna(real_b):
         return 0
 
     pred_a, pred_b, real_a, real_b = int(pred_a), int(pred_b), int(real_a), int(real_b)
 
-    if pred_a == real_a and pred_b == real_b:
-        return PUNTOS_MARCADOR_EXACTO
-
     points = 0
 
-    pred_sign = (pred_a > pred_b) - (pred_a < pred_b)
-    real_sign = (real_a > real_b) - (real_a < real_b)
+    if pred_a == real_a and pred_b == real_b:
+        points += PUNTOS_MARCADOR_EXACTO
+    else:
+        pred_sign = (pred_a > pred_b) - (pred_a < pred_b)
+        real_sign = (real_a > real_b) - (real_a < real_b)
 
-    if pred_sign == real_sign:
-        points += PUNTOS_RESULTADO_CORRECTO
+        if pred_sign == real_sign:
+            points += PUNTOS_RESULTADO_CORRECTO
 
-    if pred_a == real_a:
-        points += PUNTOS_GOLES_UN_EQUIPO
+        if pred_a == real_a:
+            points += PUNTOS_GOLES_UN_EQUIPO
 
-    if pred_b == real_b:
-        points += PUNTOS_GOLES_UN_EQUIPO
+        if pred_b == real_b:
+            points += PUNTOS_GOLES_UN_EQUIPO
 
-    if (pred_a - pred_b) == (real_a - real_b):
-        points += PUNTOS_DIFERENCIA_GOLES
+        if (pred_a - pred_b) == (real_a - real_b):
+            points += PUNTOS_DIFERENCIA_GOLES
+
+    pred_qualified = "" if pred_qualified is None or pd.isna(pred_qualified) else str(pred_qualified).strip()
+    real_qualified = "" if real_qualified is None or pd.isna(real_qualified) else str(real_qualified).strip()
+
+    if pred_qualified and real_qualified and pred_qualified == real_qualified:
+        points += PUNTOS_CLASIFICADO_CORRECTO
 
     return points
 
 
+
 def build_ranking():
-    results = get_results().rename(columns={"match_id": "partido", "goals_a": "real_a", "goals_b": "real_b"})
+    results = get_results().rename(columns={"match_id": "partido", "goals_a": "real_a", "goals_b": "real_b", "qualified_winner": "real_qualified"})
     participants = get_all_participants()
-    predictions = df_from_table("predictions").rename(columns={"goals_a": "pred_a", "goals_b": "pred_b"})
+    predictions = df_from_table("predictions").rename(columns={"goals_a": "pred_a", "goals_b": "pred_b", "qualified_winner": "pred_qualified"})
 
     if participants.empty:
         return pd.DataFrame(columns=["Puesto", "Participante", "Puntaje", "Pronósticos llenados"])
@@ -1041,7 +1097,10 @@ def build_ranking():
         total = 0
 
         for _, row in p_preds.iterrows():
-            total += calculate_points(row["pred_a"], row["pred_b"], row["real_a"], row["real_b"])
+            total += calculate_points(
+                row.get("pred_a"), row.get("pred_b"), row.get("real_a"), row.get("real_b"),
+                row.get("pred_qualified"), row.get("real_qualified")
+            )
 
         scores.append({
             "Participante": p["name"],
@@ -1133,7 +1192,7 @@ def forecasts_page():
 
     if not predictions.empty:
         predictions = predictions.rename(
-            columns={"match_id": "partido", "goals_a": "pred_a", "goals_b": "pred_b"}
+            columns={"match_id": "partido", "goals_a": "pred_a", "goals_b": "pred_b", "qualified_winner": "pred_qualified"}
         )
 
     data = fixture.merge(predictions, on="partido", how="left") if not predictions.empty else fixture.copy()
@@ -1141,6 +1200,8 @@ def forecasts_page():
         data["pred_a"] = None
     if "pred_b" not in data.columns:
         data["pred_b"] = None
+    if "pred_qualified" not in data.columns:
+        data["pred_qualified"] = None
 
     data["fecha_dt"] = pd.to_datetime(data["fecha"], errors="coerce")
 
@@ -1234,6 +1295,7 @@ def forecasts_page():
                 "partido": mid,
                 "Tu gol equipo 1": st.session_state.get(f"pred_a_{mid}"),
                 "Tu gol equipo 2": st.session_state.get(f"pred_b_{mid}"),
+                "Clasifica": st.session_state.get(f"qualified_{mid}"),
             })
 
         temp_df = pd.DataFrame(temp_rows)
@@ -1253,9 +1315,11 @@ def forecasts_page():
         match_id = int(row["partido"])
         team_a = row["equipo_1"]
         team_b = row["equipo_2"]
+        knockout = is_knockout_phase(row.get("fase", ""))
 
         default_a = None if pd.isna(row.get("pred_a")) else int(row.get("pred_a"))
         default_b = None if pd.isna(row.get("pred_b")) else int(row.get("pred_b"))
+        default_qualified = "" if row.get("pred_qualified") is None or pd.isna(row.get("pred_qualified")) else str(row.get("pred_qualified")).strip()
         started = match_has_started(row)
         status_text = match_status_text(row)
 
@@ -1271,7 +1335,8 @@ def forecasts_page():
                 st.markdown(f"<span class='winner-tag'>{status_text}</span>", unsafe_allow_html=True)
         with top2:
             st.markdown(f"**{row['fase']}**")
-            st.markdown(f"<div class='match-meta'>{row['grupo']} · {row['sede']}</div>", unsafe_allow_html=True)
+            sede_text = f"{row['grupo']} · {row['sede']}" if str(row.get("grupo", "")).strip() else f"· {row['sede']}"
+            st.markdown(f"<div class='match-meta'>{sede_text}</div>", unsafe_allow_html=True)
 
         c1, c2, c3, c4, c5 = st.columns([2.4, 1.05, 0.35, 1.05, 2.4])
 
@@ -1306,6 +1371,21 @@ def forecasts_page():
         with c5:
             st.markdown(f"<div class='team-name'>{team_label(team_b)}</div>", unsafe_allow_html=True)
 
+        qualified = None
+        if knockout:
+            options = ["—", team_a, team_b]
+            selected_index = options.index(default_qualified) if default_qualified in options else 0
+            qualified = st.selectbox(
+                "¿Quién clasifica / ganador final?",
+                options,
+                index=selected_index,
+                key=f"qualified_{match_id}",
+                disabled=started,
+                help="En eliminación directa puede haber empate en el marcador regular, pero debe elegirse quién clasifica o gana finalmente.",
+            )
+            if qualified == "—":
+                qualified = None
+
         winner, loser, _ = outcome(ga, gb, team_a, team_b)
 
         r1, r2 = st.columns(2)
@@ -1324,12 +1404,16 @@ def forecasts_page():
             else:
                 st.markdown("Perdedor: —")
 
+        if knockout and qualified:
+            st.markdown(f"Clasifica / ganador final: <span class='winner-tag'>{team_label(qualified)}</span>", unsafe_allow_html=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         return {
             "partido": match_id,
             "Tu gol equipo 1": ga,
             "Tu gol equipo 2": gb,
+            "Clasifica": qualified,
         }
 
     edited_rows = []
@@ -1385,10 +1469,12 @@ def admin_page():
 
     fixture = load_fixture()
     results = get_results().rename(
-        columns={"match_id": "partido", "goals_a": "Gol real equipo 1", "goals_b": "Gol real equipo 2"}
+        columns={"match_id": "partido", "goals_a": "Gol real equipo 1", "goals_b": "Gol real equipo 2", "qualified_winner": "Clasificado real"}
     )
 
     data = fixture.merge(results, on="partido", how="left")
+    if "Clasificado real" not in data.columns:
+        data["Clasificado real"] = ""
     data["Ganador real"] = data.apply(
         lambda r: outcome(r["Gol real equipo 1"], r["Gol real equipo 2"], r["equipo_1"], r["equipo_2"])[0],
         axis=1,
@@ -1401,7 +1487,7 @@ def admin_page():
     view = data[[
         "partido", "fase", "fecha", "hora_peru", "grupo", "equipo_1",
         "Gol real equipo 1", "Gol real equipo 2", "equipo_2",
-        "Ganador real", "Perdedor real", "sede"
+        "Ganador real", "Perdedor real", "Clasificado real", "sede"
     ]].copy()
 
     edited = st.data_editor(
@@ -1420,6 +1506,7 @@ def admin_page():
             "Gol real equipo 2": st.column_config.NumberColumn("Goles reales Eq. 2", min_value=0, max_value=20, step=1),
             "Ganador real": st.column_config.TextColumn("Ganador", disabled=True),
             "Perdedor real": st.column_config.TextColumn("Perdedor", disabled=True),
+            "Clasificado real": st.column_config.TextColumn("Clasificado real / ganador final"),
             "sede": st.column_config.TextColumn("Sede", disabled=True),
         },
         disabled=["partido", "fase", "fecha", "hora_peru", "grupo", "equipo_1", "equipo_2", "Ganador real", "Perdedor real", "sede"],
@@ -1557,6 +1644,7 @@ def ranking_page():
         - Resultado correcto sin marcador exacto: **{PUNTOS_RESULTADO_CORRECTO} puntos**
         - Goles exactos de un equipo: **{PUNTOS_GOLES_UN_EQUIPO} puntos**
         - Diferencia de goles correcta: **{PUNTOS_DIFERENCIA_GOLES} puntos**
+        - Clasificado / ganador final correcto en eliminación directa: **{PUNTOS_CLASIFICADO_CORRECTO} puntos**
         """
     )
 
@@ -1634,4 +1722,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
