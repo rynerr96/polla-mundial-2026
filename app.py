@@ -406,6 +406,33 @@ MATCH_ADVANCER_FALLBACK = {
     ("Perdedor", 75): "Alemania",
     ("Ganador", 76): "Marruecos",
     ("Perdedor", 76): "Países Bajos",
+    # Fallback actualizado para armar octavos si aún no se cargaron
+    # todos los resultados en Supabase. Si existe results.qualified_winner,
+    # Supabase tiene prioridad sobre estos valores.
+    ("Ganador", 77): "Noruega",
+    ("Perdedor", 77): "Costa de Marfil",
+    ("Ganador", 78): "Francia",
+    ("Perdedor", 78): "Suecia",
+    ("Ganador", 79): "México",
+    ("Perdedor", 79): "Ecuador",
+    ("Ganador", 80): "Inglaterra",
+    ("Perdedor", 80): "RD de Congo",
+    ("Ganador", 81): "Bélgica",
+    ("Perdedor", 81): "Senegal",
+    ("Ganador", 82): "Estados Unidos",
+    ("Perdedor", 82): "Bosnia",
+    ("Ganador", 83): "España",
+    ("Perdedor", 83): "Austria",
+    ("Ganador", 84): "Portugal",
+    ("Perdedor", 84): "Croacia",
+    ("Ganador", 85): "Suiza",
+    ("Perdedor", 85): "Argelia",
+    ("Ganador", 86): "Egipto",
+    ("Perdedor", 86): "Australia",
+    ("Ganador", 87): "Argentina",
+    ("Perdedor", 87): "Cabo Verde",
+    ("Ganador", 88): "Colombia",
+    ("Perdedor", 88): "Ghana",
 }
 
 # Cruces oficiales/actualizados de dieciseisavos.
@@ -427,6 +454,18 @@ KNOCKOUT_OVERRIDES = {
     86: {"fecha": "2026-07-03", "hora_peru": "1:00 p.m.", "equipo_1": "Australia", "equipo_2": "Egipto", "sede": "Miami Stadium"},
     87: {"fecha": "2026-07-03", "hora_peru": "5:00 p.m.", "equipo_1": "Argentina", "equipo_2": "Cabo Verde", "sede": "Kansas City Stadium"},
     88: {"fecha": "2026-07-03", "hora_peru": "8:30 p.m.", "equipo_1": "Colombia", "equipo_2": "Ghana", "sede": "Dallas Stadium"},
+
+    # Octavos oficiales según la llave actual.
+    # Se dejan como referencias a los ganadores para que la app tome el
+    # qualified_winner real desde Supabase cuando esté cargado.
+    89: {"fecha": "2026-07-04", "hora_peru": "12:00 p.m.", "equipo_1": "Ganador partido 73", "equipo_2": "Ganador partido 76", "sede": "Philadelphia Stadium"},
+    90: {"fecha": "2026-07-04", "hora_peru": "4:00 p.m.", "equipo_1": "Ganador partido 75", "equipo_2": "Ganador partido 78", "sede": "Houston Stadium"},
+    91: {"fecha": "2026-07-05", "hora_peru": "3:00 p.m.", "equipo_1": "Ganador partido 74", "equipo_2": "Ganador partido 77", "sede": "New York New Jersey Stadium"},
+    92: {"fecha": "2026-07-05", "hora_peru": "7:00 p.m.", "equipo_1": "Ganador partido 79", "equipo_2": "Ganador partido 80", "sede": "Dallas Stadium"},
+    93: {"fecha": "2026-07-06", "hora_peru": "2:00 p.m.", "equipo_1": "Ganador partido 84", "equipo_2": "Ganador partido 83", "sede": "Seattle Stadium"},
+    94: {"fecha": "2026-07-06", "hora_peru": "7:00 p.m.", "equipo_1": "Ganador partido 82", "equipo_2": "Ganador partido 81", "sede": "Los Angeles Stadium"},
+    95: {"fecha": "2026-07-07", "hora_peru": "11:00 a.m.", "equipo_1": "Ganador partido 87", "equipo_2": "Ganador partido 86", "sede": "Atlanta Stadium"},
+    96: {"fecha": "2026-07-07", "hora_peru": "3:00 p.m.", "equipo_1": "Ganador partido 85", "equipo_2": "Ganador partido 88", "sede": "Vancouver Stadium"},
 }
 
 KNOCKOUT_PHASES = {"Dieciseisavos", "Octavos", "Cuartos", "Semifinales", "Tercer puesto", "Final"}
