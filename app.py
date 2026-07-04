@@ -394,6 +394,20 @@ CLASIFICADOS_MANUALES = {
     "2º Grupo B": "Sudáfrica",
 }
 
+# Fallback manual de ganadores ya conocidos.
+# Primero se intenta leer el clasificado real desde Supabase;
+# esto solo se usa cuando aún no se cargó el resultado en la tabla results.
+MATCH_ADVANCER_FALLBACK = {
+    ("Ganador", 73): "Canadá",
+    ("Perdedor", 73): "Sudáfrica",
+    ("Ganador", 74): "Brasil",
+    ("Perdedor", 74): "Japón",
+    ("Ganador", 75): "Paraguay",
+    ("Perdedor", 75): "Alemania",
+    ("Ganador", 76): "Marruecos",
+    ("Perdedor", 76): "Países Bajos",
+}
+
 # Cruces oficiales/actualizados de dieciseisavos.
 # Se aplican en memoria para no obligarte a modificar fixture.csv.
 KNOCKOUT_OVERRIDES = {
@@ -588,6 +602,112 @@ def build_third_place_assignments(fixture: pd.DataFrame, third_places: list[dict
     return assignments
 
 
+def normalize_result_team(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    value = str(value).strip()
+    return "" if value in ["", "—", "nan", "None"] else value
+
+
+def build_match_advancer_map(df: pd.DataFrame) -> dict:
+    """
+    Resuelve textos como 'Ganador partido 74' o 'Perdedor partido 101'.
+
+    Prioridad:
+    1) Si en Supabase results.qualified_winner ya está cargado, usa ese clasificado.
+    2) Si no hay qualified_winner, intenta calcular con goles reales de 90 minutos
+       cuando no hubo empate.
+    3) Si todavía no hay resultado, muestra el cruce pendiente en formato legible,
+       por ejemplo: 'Ganador 77: Costa de Marfil / Noruega'.
+
+    Así los octavos no quedan como 'Ganador partido 77', sino que muestran todos
+    los cruces de donde saldrá cada clasificado.
+    """
+    advancers = dict(MATCH_ADVANCER_FALLBACK)
+
+    # Primero armamos un mapa de partidos del fixture ya resuelto en memoria.
+    fixture_by_match = {}
+    for _, fixture_row in df.iterrows():
+        try:
+            match_id = int(fixture_row.get("partido"))
+        except Exception:
+            continue
+        fixture_by_match[match_id] = fixture_row
+
+    try:
+        results = get_results()
+    except Exception:
+        results = pd.DataFrame()
+
+    results_by_match = {}
+    if results is not None and not results.empty:
+        for _, r in results.iterrows():
+            try:
+                results_by_match[int(r.get("match_id"))] = r
+            except Exception:
+                continue
+
+    for match_id, fixture_row in fixture_by_match.items():
+        team_a = str(fixture_row.get("equipo_1", "")).strip()
+        team_b = str(fixture_row.get("equipo_2", "")).strip()
+
+        result_row = results_by_match.get(match_id)
+        winner = ""
+        loser = ""
+
+        if result_row is not None:
+            real_a = result_row.get("goals_a")
+            real_b = result_row.get("goals_b")
+            qualified = normalize_result_team(result_row.get("qualified_winner"))
+
+            if qualified:
+                winner = qualified
+                if qualified == team_a:
+                    loser = team_b
+                elif qualified == team_b:
+                    loser = team_a
+            else:
+                calculated_winner, calculated_loser, _ = outcome(real_a, real_b, team_a, team_b)
+                if calculated_winner and calculated_winner != "Empate":
+                    winner = calculated_winner
+                    loser = calculated_loser
+
+        if winner:
+            advancers[("Ganador", match_id)] = winner
+        elif ("Ganador", match_id) not in advancers and team_a and team_b:
+            advancers[("Ganador", match_id)] = f"Ganador {match_id}: {team_a} / {team_b}"
+
+        if loser:
+            advancers[("Perdedor", match_id)] = loser
+        elif ("Perdedor", match_id) not in advancers and team_a and team_b:
+            advancers[("Perdedor", match_id)] = f"Perdedor {match_id}: {team_a} / {team_b}"
+
+    return advancers
+
+
+def resolve_match_reference(team: str, advancers: dict) -> str:
+    team = normalize_text(team)
+    match = re.match(r"^(Ganador|Perdedor)\s+partido\s+(\d+)$", team, flags=re.IGNORECASE)
+    if not match:
+        return team
+
+    kind_raw = match.group(1).strip().lower()
+    kind = "Ganador" if kind_raw == "ganador" else "Perdedor"
+    match_id = int(match.group(2))
+    return advancers.get((kind, match_id), team)
+
+
+def apply_match_reference_resolution(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy().fillna("")
+    advancers = build_match_advancer_map(df)
+
+    for col in ["equipo_1", "equipo_2"]:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: resolve_match_reference(x, advancers))
+
+    return df
+
+
 def resolve_team_name(team: str, group_positions: dict | None = None, third_assignments: dict | None = None) -> str:
     team = normalize_text(team)
     group_positions = group_positions or {}
@@ -624,6 +744,7 @@ def load_fixture():
     df = load_fixture_raw()
     df = apply_resolved_teams(df)
     df = apply_knockout_overrides(df)
+    df = apply_match_reference_resolution(df)
     return df
 
 
@@ -1743,6 +1864,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
