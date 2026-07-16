@@ -466,6 +466,20 @@ KNOCKOUT_OVERRIDES = {
     94: {"fecha": "2026-07-06", "hora_peru": "7:00 p.m.", "equipo_1": "Ganador partido 82", "equipo_2": "Ganador partido 81", "sede": "Los Angeles Stadium"},
     95: {"fecha": "2026-07-07", "hora_peru": "11:00 a.m.", "equipo_1": "Ganador partido 87", "equipo_2": "Ganador partido 86", "sede": "Atlanta Stadium"},
     96: {"fecha": "2026-07-07", "hora_peru": "3:00 p.m.", "equipo_1": "Ganador partido 85", "equipo_2": "Ganador partido 88", "sede": "Vancouver Stadium"},
+
+    # Cuartos de final
+    97: {"equipo_1": "Ganador partido 89", "equipo_2": "Ganador partido 90"},
+    98: {"equipo_1": "Ganador partido 93", "equipo_2": "Ganador partido 94"},
+    99: {"equipo_1": "Ganador partido 91", "equipo_2": "Ganador partido 92"},
+    100: {"equipo_1": "Ganador partido 95", "equipo_2": "Ganador partido 96"},
+
+    # Semifinales
+    101: {"equipo_1": "Ganador partido 97", "equipo_2": "Ganador partido 98"},
+    102: {"equipo_1": "Ganador partido 99", "equipo_2": "Ganador partido 100"},
+
+    # Tercer puesto y final
+    103: {"equipo_1": "Perdedor partido 101", "equipo_2": "Perdedor partido 102"},
+    104: {"equipo_1": "Ganador partido 101", "equipo_2": "Ganador partido 102"},
 }
 
 KNOCKOUT_PHASES = {"Dieciseisavos", "Octavos", "Cuartos", "Semifinales", "Tercer puesto", "Final"}
@@ -713,13 +727,9 @@ def build_match_advancer_map(df: pd.DataFrame) -> dict:
 
         if winner:
             advancers[("Ganador", match_id)] = winner
-        elif ("Ganador", match_id) not in advancers and team_a and team_b:
-            advancers[("Ganador", match_id)] = f"Ganador {match_id}: {team_a} / {team_b}"
 
         if loser:
             advancers[("Perdedor", match_id)] = loser
-        elif ("Perdedor", match_id) not in advancers and team_a and team_b:
-            advancers[("Perdedor", match_id)] = f"Perdedor {match_id}: {team_a} / {team_b}"
 
     return advancers
 
@@ -737,14 +747,39 @@ def resolve_match_reference(team: str, advancers: dict) -> str:
 
 
 def apply_match_reference_resolution(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy().fillna("")
-    advancers = build_match_advancer_map(df)
+    """
+    Resuelve referencias de la llave de manera iterativa.
 
-    for col in ["equipo_1", "equipo_2"]:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: resolve_match_reference(x, advancers))
+    Es necesario hacerlo por rondas:
+    - primero se conocen los participantes de cuartos;
+    - después los de semifinales;
+    - finalmente se pueden obtener los perdedores de las semifinales
+      para el partido por el tercer puesto.
+    """
+    resolved = df.copy().fillna("")
 
-    return df
+    # Ocho vueltas son suficientes para recorrer toda la llave
+    # desde dieciseisavos hasta la final.
+    for _ in range(8):
+        advancers = build_match_advancer_map(resolved)
+        changed = False
+
+        for col in ["equipo_1", "equipo_2"]:
+            if col not in resolved.columns:
+                continue
+
+            previous = resolved[col].astype(str).copy()
+            resolved[col] = resolved[col].apply(
+                lambda value: resolve_match_reference(value, advancers)
+            )
+
+            if not resolved[col].astype(str).equals(previous):
+                changed = True
+
+        if not changed:
+            break
+
+    return resolved
 
 
 def resolve_team_name(team: str, group_positions: dict | None = None, third_assignments: dict | None = None) -> str:
